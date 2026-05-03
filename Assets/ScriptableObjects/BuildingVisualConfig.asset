@@ -14,38 +14,50 @@ MonoBehaviour:
   m_EditorClassIdentifier: CityTwin::CityTwin.UI.BuildingVisualConfig
   entries:
   - buildingId: garden
-    haloColor: {r: 0.16637257, g: 0.9811321, b: 0.06016379, a: 1}
+    sprite: {fileID: 21300000, guid: e40d541b279f14c989e5755d4edd9346, type: 3}
+    haloColor: {r: 0.60784316, g: 1, b: 0.003921569, a: 1}
     haloScaleMultiplier: 0.6
   - buildingId: park
-    haloColor: {r: 0.16637257, g: 0.9811321, b: 0.06016379, a: 1}
+    sprite: {fileID: 21300000, guid: 333e3d4dde11e4c89a1b8c0fdd77571f, type: 3}
+    haloColor: {r: 0.60784316, g: 1, b: 0.003921569, a: 1}
     haloScaleMultiplier: 1
   - buildingId: recycling_plant
-    haloColor: {r: 0.16637257, g: 0.9811321, b: 0.06016379, a: 1}
+    sprite: {fileID: 21300000, guid: 333e3d4dde11e4c89a1b8c0fdd77571f, type: 3}
+    haloColor: {r: 0.60784316, g: 1, b: 0.003921569, a: 1}
     haloScaleMultiplier: 1.4
   - buildingId: office
-    haloColor: {r: 0.85883474, g: 0.16509432, b: 1, a: 1}
+    sprite: {fileID: 21300000, guid: d7083cf4ced594d689f37df99f21e77a, type: 3}
+    haloColor: {r: 1, g: 0.5686275, b: 0, a: 1}
     haloScaleMultiplier: 0.6
   - buildingId: mall
-    haloColor: {r: 0.85883474, g: 0.16509432, b: 1, a: 1}
+    sprite: {fileID: 21300000, guid: 8e4ac36005d8a42f09230c53dcedbd92, type: 3}
+    haloColor: {r: 1, g: 0.5686275, b: 0, a: 1}
     haloScaleMultiplier: 1
   - buildingId: factory
-    haloColor: {r: 0.85883474, g: 0.16509432, b: 1, a: 1}
+    sprite: {fileID: 21300000, guid: 8e4ac36005d8a42f09230c53dcedbd92, type: 3}
+    haloColor: {r: 1, g: 0.5686275, b: 0, a: 1}
     haloScaleMultiplier: 1.4
   - buildingId: police_station
-    haloColor: {r: 0, g: 0.56467056, b: 1, a: 1}
+    sprite: {fileID: 21300000, guid: 44cbd62f7cb544f3984b59a0631a4e9e, type: 3}
+    haloColor: {r: 0.2, g: 0.5254902, b: 1, a: 1}
     haloScaleMultiplier: 0.6
   - buildingId: fire_station
+    sprite: {fileID: 21300000, guid: f56e1a0b3ba304944bb0bf6e2c17d13f, type: 3}
     haloColor: {r: 0, g: 0.56467056, b: 1, a: 1}
     haloScaleMultiplier: 1
   - buildingId: hospital
+    sprite: {fileID: 21300000, guid: f56e1a0b3ba304944bb0bf6e2c17d13f, type: 3}
     haloColor: {r: 0, g: 0.56467056, b: 1, a: 1}
     haloScaleMultiplier: 1.4
   - buildingId: school
-    haloColor: {r: 1, g: 0.7604933, b: 0, a: 1}
+    sprite: {fileID: 21300000, guid: 677e6c1ab99b54ed483f1239a4d5ac17, type: 3}
+    haloColor: {r: 1, g: 0, b: 1, a: 1}
     haloScaleMultiplier: 0.6
   - buildingId: museum
-    haloColor: {r: 1, g: 0.7604933, b: 0, a: 1}
+    sprite: {fileID: 21300000, guid: 17d4872cd343d4903a62fea3145a3c07, type: 3}
+    haloColor: {r: 1, g: 0, b: 1, a: 1}
     haloScaleMultiplier: 1
   - buildingId: state_circus
-    haloColor: {r: 1, g: 0.7604933, b: 0, a: 1}
+    sprite: {fileID: 21300000, guid: 677e6c1ab99b54ed483f1239a4d5ac17, type: 3}
+    haloColor: {r: 1, g: 0, b: 1, a: 1}
     haloScaleMultiplier: 1.4

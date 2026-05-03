@@ -59,6 +59,21 @@ namespace CityTwin.Simulation
         public float HealthSafety => _healthSafety;
         public float CultureEdu => _cultureEdu;
 
+        // Debug-tunable properties (get/set with recalc on change)
+        public float Norm { get => _norm; set => _norm = Mathf.Max(0.001f, value); }
+        public float InfluenceRefBase { get => _influenceRefBase; set => _influenceRefBase = Mathf.Max(0.001f, value); }
+        public float InfluenceReferenceMeters { get => _influenceReferenceMeters; set => _influenceReferenceMeters = Mathf.Max(0.01f, value); }
+        public float DistanceExponent { get => _distanceExponent; set => _distanceExponent = Mathf.Max(0f, value); }
+        public float DistanceFloor { get => _distanceFloor; set => _distanceFloor = Mathf.Max(0f, value); }
+        public float DistanceScale { get => _distanceScale; set => _distanceScale = Mathf.Max(1f, value); }
+        public float MaxRoadDistance { get => _maxRoadDistance; set => _maxRoadDistance = Mathf.Max(1f, value); }
+        public float QolBalancePenalty { get => _qolBalancePenalty; set => _qolBalancePenalty = Mathf.Max(0f, value); }
+        public float QolCap { get => _qolCap; set => _qolCap = Mathf.Max(1f, value); }
+        public float RoadConnectRange { get => _roadConnectRange; set => _roadConnectRange = Mathf.Max(1f, value); }
+        public float ImpactRadiusSmall { get => _impactRadiusSmall; set => _impactRadiusSmall = Mathf.Max(1f, value); }
+        public float ImpactRadiusMedium { get => _impactRadiusMedium; set => _impactRadiusMedium = Mathf.Max(1f, value); }
+        public float ImpactRadiusLarge { get => _impactRadiusLarge; set => _impactRadiusLarge = Mathf.Max(1f, value); }
+
         public struct HubMetricSnapshot
         {
             public int HubIndex;
@@ -102,6 +117,17 @@ namespace CityTwin.Simulation
         private readonly List<TileStopConnection> _activeStopConnections = new List<TileStopConnection>();
         public IReadOnlyList<TileStopConnection> ActiveStopConnections => _activeStopConnections;
 
+        public struct TileHubDirectConnection
+        {
+            public string TileId;
+            public int HubIndex;
+            public Vector2 HubPosition;
+            public float Distance;
+        }
+
+        private readonly List<TileHubDirectConnection> _activeHubDirectConnections = new List<TileHubDirectConnection>();
+        public IReadOnlyList<TileHubDirectConnection> ActiveHubDirectConnections => _activeHubDirectConnections;
+
         public struct TilePlacementState
         {
             public string TileId;
@@ -116,6 +142,10 @@ namespace CityTwin.Simulation
         public IReadOnlyList<TilePlacementState> TileStates => _tileStates;
 
         public TransitGraph TransitGraph => _transitGraph;
+
+        /// <summary>Optional delegate that returns the visual halo radius for a building id.
+        /// When set, connection range uses halo radius instead of _roadConnectRange.</summary>
+        public Func<string, float> HaloRadiusResolver { get; set; }
 
         public event Action OnMetricsChanged;
 
@@ -190,16 +220,18 @@ namespace CityTwin.Simulation
             }
             string tileId = $"tile_{_nextTileId++}";
             bool inactive = IsOnObstacle(pose.Position);
+            float connRange = GetConnectionRange(pose.BuildingId);
             var roadConns = inactive ? new List<TransitGraph.ConnectionPoint>()
-                                     : _transitGraph.GetRoadConnections(pose.Position, _roadConnectRange);
+                                     : _transitGraph.GetRoadConnections(pose.Position, connRange);
             var stopConns = inactive ? new List<TransitGraph.StopConnectionPoint>()
-                                     : _transitGraph.GetStopConnections(pose.Position, _roadConnectRange);
+                                     : _transitGraph.GetStopConnections(pose.Position, connRange);
 
-            bool connected = roadConns.Count > 0 || stopConns.Count > 0;
+            bool nearHub = !inactive && IsNearAnyHub(pose.Position, connRange);
+            bool connected = roadConns.Count > 0 || stopConns.Count > 0 || nearHub;
 
             Debug.Log($"[SimEngine:AddTile] {tileId} building={pose.BuildingId} pos=({pose.Position.x:F1},{pose.Position.y:F1}) " +
-                      $"onObstacle={inactive} roadConns={roadConns.Count} stopConns={stopConns.Count} connected={connected} " +
-                      $"roadConnectRange={_roadConnectRange:F0} graphNodes={_transitGraph.Nodes.Count} graphEdges={_transitGraph.Edges.Count} stops={_transitGraph.Stops.Count}");
+                      $"onObstacle={inactive} roadConns={roadConns.Count} stopConns={stopConns.Count} nearHub={nearHub} connected={connected} " +
+                      $"connRange={connRange:F0} graphNodes={_transitGraph.Nodes.Count} graphEdges={_transitGraph.Edges.Count} stops={_transitGraph.Stops.Count}");
 
             _placedTiles.Add(new PlacedTile
             {
@@ -226,13 +258,15 @@ namespace CityTwin.Simulation
             t.Rotation = rotation;
             t.Inactive = IsOnObstacle(position);
             t.OverlapInvalid = overlapInvalid;
+            float connRange = GetConnectionRange(t.BuildingId);
             t.RoadConnections = t.Inactive
                 ? new List<TransitGraph.ConnectionPoint>()
-                : _transitGraph.GetRoadConnections(position, _roadConnectRange);
+                : _transitGraph.GetRoadConnections(position, connRange);
             t.StopConnections = t.Inactive
                 ? new List<TransitGraph.StopConnectionPoint>()
-                : _transitGraph.GetStopConnections(position, _roadConnectRange);
-            t.Connected = t.RoadConnections.Count > 0 || t.StopConnections.Count > 0;
+                : _transitGraph.GetStopConnections(position, connRange);
+            bool nearHub = !t.Inactive && IsNearAnyHub(position, connRange);
+            t.Connected = t.RoadConnections.Count > 0 || t.StopConnections.Count > 0 || nearHub;
             _placedTiles[idx] = t;
             RecalculateMetrics();
             return true;
@@ -301,6 +335,7 @@ namespace CityTwin.Simulation
                     _activeConnections.Clear();
                     _activeRoadConnections.Clear();
                     _activeStopConnections.Clear();
+                    _activeHubDirectConnections.Clear();
                     _tileStates.Clear();
                     _hubMetrics.Clear();
                     if (logMetricsWhenChanged)
@@ -323,6 +358,7 @@ namespace CityTwin.Simulation
             _activeConnections.Clear();
             _activeRoadConnections.Clear();
             _activeStopConnections.Clear();
+            _activeHubDirectConnections.Clear();
             _tileStates.Clear();
 
             // Populate tile placement states, road/stop connection visuals
@@ -395,18 +431,16 @@ namespace CityTwin.Simulation
                 float sizeBoost = GetSizeBoost(b);
                 float connDistMult = GetConnectionDistanceMult(b);
                 float maxRoadDist = _maxRoadDistance * connDistMult * coordScale;
-                float impactRadius = GetImpactRadius(b) * coordScale;
+                float connRange = GetConnectionRange(t.BuildingId);
 
-                // Find seed stops within impact radius (for network scoring)
+                // Use the tile's existing stop connections as seed stops for network scoring.
+                // These were already filtered by the halo-based connection range.
                 List<int> seedStopIndices = null;
-                if (hasTransit && stops.Count > 0)
+                if (hasTransit && t.StopConnections != null && t.StopConnections.Count > 0)
                 {
-                    seedStopIndices = new List<int>();
-                    for (int s = 0; s < stops.Count; s++)
-                    {
-                        if (Vector2.Distance(t.Position, stops[s].Position) <= impactRadius)
-                            seedStopIndices.Add(s);
-                    }
+                    seedStopIndices = new List<int>(t.StopConnections.Count);
+                    foreach (var sc in t.StopConnections)
+                        seedStopIndices.Add(sc.StopIndex);
                 }
 
                 for (int hi = 0; hi < hubCount; hi++)
@@ -415,17 +449,15 @@ namespace CityTwin.Simulation
                     float pathUnits = float.MaxValue;
                     int transportEdgeHops = 0;
 
-                    // 1. Direct path: building within impact radius AND within max road distance
-                    if (directDist <= impactRadius && directDist <= maxRoadDist)
+                    // 1. Direct path: building halo overlaps hub
+                    if (directDist <= connRange)
                     {
                         pathUnits = directDist;
                         transportEdgeHops = 0;
                     }
-                    else if (directDist <= impactRadius)
-                    {
-                        // Within impact radius but exceeds road cap — no contribution
-                    }
-                    else if (hasTransit && seedStopIndices != null && seedStopIndices.Count > 0)
+
+                    // 2. Network path via stops: try even if direct path found (take shorter)
+                    if (hasTransit && seedStopIndices != null && seedStopIndices.Count > 0)
                     {
                         // 2. Network path: walk to seed stop → graph edge nodes → Dijkstra → hub
                         int hubNodeId = hubNodeIds[hi];
@@ -461,7 +493,7 @@ namespace CityTwin.Simulation
                             }
                         }
 
-                        if (bestNetPath <= maxRoadDist + 2f * coordScale)
+                        if (bestNetPath <= maxRoadDist + 2f * coordScale && bestNetPath < pathUnits)
                         {
                             pathUnits = bestNetPath;
                             transportEdgeHops = 1; // network path = 1+ hops
@@ -471,6 +503,17 @@ namespace CityTwin.Simulation
                     if (pathUnits >= float.MaxValue) continue;
 
                     _activeConnections.Add(new TileHubConnection { TileId = t.TileId, HubIndex = hi });
+
+                    if (transportEdgeHops == 0)
+                    {
+                        _activeHubDirectConnections.Add(new TileHubDirectConnection
+                        {
+                            TileId = t.TileId,
+                            HubIndex = hi,
+                            HubPosition = hubPositions[hi],
+                            Distance = directDist
+                        });
+                    }
 
                     // Apply HTML curve: (ref / (ref + pathMeters))^exp
                     float pathMeters = pathUnits / adjustedDistScale;
@@ -606,6 +649,37 @@ namespace CityTwin.Simulation
         {
             foreach (var (center, radius) in _obstacles)
                 if (Vector2.Distance(position, center) <= radius) return true;
+            return false;
+        }
+
+        [Tooltip("Extra range added to every building's halo radius for connection checks.")]
+        [SerializeField] private float _connectionRangeOffset = 0f;
+
+        public float ConnectionRangeOffset { get => _connectionRangeOffset; set => _connectionRangeOffset = value; }
+
+        private float GetConnectionRange(string buildingId)
+        {
+            if (HaloRadiusResolver != null)
+            {
+                float r = HaloRadiusResolver(buildingId);
+                if (r > 0f) return r + _connectionRangeOffset;
+            }
+            return _roadConnectRange + _connectionRangeOffset;
+        }
+
+        private bool IsNearAnyHub(Vector2 position, float range)
+        {
+            if (_scoringHubs != null)
+            {
+                for (int i = 0; i < _scoringHubs.Count; i++)
+                    if (Vector2.Distance(position, _scoringHubs[i].position) <= range) return true;
+            }
+            else
+            {
+                var nodes = _transitGraph.Nodes;
+                for (int i = 0; i < nodes.Count; i++)
+                    if (Vector2.Distance(position, nodes[i].Position) <= range) return true;
+            }
             return false;
         }
 

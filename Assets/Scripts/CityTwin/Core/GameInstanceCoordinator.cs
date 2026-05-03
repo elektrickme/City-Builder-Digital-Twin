@@ -79,7 +79,9 @@ namespace CityTwin.Core
         private void Start()
         {
             ApplyRegistryHubsToSimulation();
-            GenerateTransitStops();
+            // Only generate stops here if config is already loaded; otherwise ApplyConfig will do it.
+            if (configLoader != null && configLoader.Config != null)
+                GenerateTransitStops();
             placementOverlapValidator?.RefreshHubFootprints();
             simulationEngine?.RecalculateMetrics();
 
@@ -169,6 +171,16 @@ namespace CityTwin.Core
             simulationEngine?.SetBuildingCatalog(new List<BuildingDefinition>(cfg.Buildings ?? System.Array.Empty<BuildingDefinition>()));
 
             simulationEngine?.SetConfig(cfg.Scoring, cfg.Accessibility);
+
+            if (simulationEngine != null && buildingSpawner != null)
+            {
+                simulationEngine.HaloRadiusResolver = (buildingId) =>
+                {
+                    if (buildingSpawner.TryGetEstimatedBuildingRadius(buildingId, out float r))
+                        return r;
+                    return 0f;
+                };
+            }
 
             if (cfg.Map != null && cfg.Map.nodes != null && cfg.Map.nodes.Length > 0)
                 BuildTransitGraphFromConfig(cfg.Map);
@@ -278,8 +290,8 @@ namespace CityTwin.Core
 
         /// <summary>
         /// Build a transit graph using the actual hub positions in content-local space.
-        /// Only creates edges for hub pairs listed in the active HubLayoutPreset's Connections,
-        /// so the graph (and the road lines rendered from it) matches the manually authored layout.
+        /// Each hub connects to its k nearest neighbors (k=3), matching the HTML editor logic.
+        /// Edges are undirected and deduplicated.
         /// </summary>
         private void RebuildTransitGraphFromHubs(List<(Vector2 position, float population)> hubs)
         {
@@ -289,30 +301,40 @@ namespace CityTwin.Core
             for (int i = 0; i < hubs.Count; i++)
                 graph.AddNode(hubs[i].position, hubs[i].population);
 
-            var preset = hubLayoutManager != null ? hubLayoutManager.ActivePreset : null;
-            if (preset == null || hubRegistry == null)
-            {
-                simulationEngine.SetTransitGraph(graph);
-                Debug.LogWarning("[Coordinator] No active hub layout preset — transit graph built with nodes only, no edges.");
-                return;
-            }
-
-            var registryHubs = hubRegistry.Hubs;
+            const int k = 3;
+            var edgeSet = new HashSet<long>();
             int edgeCount = 0;
-            foreach (var pair in preset.Connections)
+
+            for (int i = 0; i < hubs.Count; i++)
             {
-                if (pair.hubA == null || pair.hubB == null || pair.hubA == pair.hubB) continue;
-                int a = IndexOfHub(registryHubs, pair.hubA);
-                int b = IndexOfHub(registryHubs, pair.hubB);
-                if (a < 0 || b < 0) continue;
-                float dist = Vector2.Distance(hubs[a].position, hubs[b].position);
-                graph.AddEdge(a, b, dist);
-                graph.AddEdge(b, a, dist);
-                edgeCount += 2;
+                // Sort all other hubs by distance
+                var nearest = new List<(int index, float dist)>();
+                for (int j = 0; j < hubs.Count; j++)
+                {
+                    if (j == i) continue;
+                    nearest.Add((j, Vector2.Distance(hubs[i].position, hubs[j].position)));
+                }
+                nearest.Sort((a, b) => a.dist.CompareTo(b.dist));
+
+                int keep = Mathf.Min(k, nearest.Count);
+                for (int n = 0; n < keep; n++)
+                {
+                    int a = i;
+                    int b = nearest[n].index;
+                    int lo = Mathf.Min(a, b);
+                    int hi = Mathf.Max(a, b);
+                    long key = ((long)lo << 32) | (uint)hi;
+                    if (!edgeSet.Add(key)) continue;
+
+                    float dist = nearest[n].dist;
+                    graph.AddEdge(a, b, dist);
+                    graph.AddEdge(b, a, dist);
+                    edgeCount += 2;
+                }
             }
 
             simulationEngine.SetTransitGraph(graph);
-            Debug.Log($"[Coordinator] Rebuilt transit graph from preset '{preset.name}': {hubs.Count} nodes, {edgeCount} directed edges");
+            Debug.Log($"[Coordinator] Rebuilt transit graph (k-nearest k={k}): {hubs.Count} nodes, {edgeCount} directed edges, {edgeSet.Count} unique links");
         }
 
         /// <summary>Generate transit stops along road edges using config values.</summary>

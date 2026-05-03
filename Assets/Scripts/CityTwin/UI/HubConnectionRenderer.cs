@@ -47,6 +47,10 @@ namespace CityTwin.UI
         [Tooltip("Distance threshold: closer than this = solid/close color, further = semi-transparent/far color.")]
         [SerializeField] private float stopCloseDistanceThreshold = 150f;
 
+        [Header("Building -> Hub (direct)")]
+        [SerializeField] private Color buildingHubColor = new Color(0.2f, 1f, 0.4f, 0.7f);
+        [SerializeField] private float buildingHubThickness = 3f;
+
         [Header("Transit Stops")]
         [Tooltip("Prefab for stop markers. Should be a small UI element (e.g. Image). Will be rotated 45 degrees to form a diamond.")]
         [SerializeField] private GameObject stopMarkerPrefab;
@@ -56,6 +60,9 @@ namespace CityTwin.UI
         private readonly Dictionary<(string tileId, int stopIdx), IConnectionVisual> _buildingStopLines =
             new Dictionary<(string, int), IConnectionVisual>();
         private readonly HashSet<(string, int)> _currentBuildingStopKeys = new HashSet<(string, int)>();
+        private readonly Dictionary<(string tileId, int hubIdx), IConnectionVisual> _buildingHubLines =
+            new Dictionary<(string, int), IConnectionVisual>();
+        private readonly HashSet<(string, int)> _currentBuildingHubKeys = new HashSet<(string, int)>();
         private readonly Dictionary<(int hubA, int hubB), IConnectionVisual> _activeHubHub =
             new Dictionary<(int, int), IConnectionVisual>();
         private readonly List<IConnectionVisual> _pool = new List<IConnectionVisual>();
@@ -153,39 +160,77 @@ namespace CityTwin.UI
                 }
             }
 
-            // --- Hub -> Hub lines ---
-            if (drawHubToHubConnections && hubRegistry != null && hubLayoutManager?.ActivePreset != null)
+            // --- Building -> Hub direct lines ---
+            _currentBuildingHubKeys.Clear();
+            if (simulationEngine != null)
+            {
+                var hubDirectConns = simulationEngine.ActiveHubDirectConnections;
+                for (int i = 0; i < hubDirectConns.Count; i++)
+                {
+                    var hc = hubDirectConns[i];
+
+                    Vector2 buildingPos;
+                    bool gotBuilding = useTableSpace
+                        ? buildingSpawner.TryGetMarkerPosition(hc.TileId, out buildingPos)
+                        : buildingSpawner.TryGetMarkerPositionIn(hc.TileId, root, out buildingPos);
+                    if (!gotBuilding) continue;
+
+                    var key = (hc.TileId, hc.HubIndex);
+                    _currentBuildingHubKeys.Add(key);
+
+                    Vector2 from = RootToHolderSpace(buildingPos, root, brParent);
+                    Vector2 to = RootToHolderSpace(hc.HubPosition, root, brParent);
+
+                    if (!_buildingHubLines.TryGetValue(key, out IConnectionVisual visual))
+                    {
+                        visual = Acquire(brParent);
+                        if (visual != null)
+                            _buildingHubLines[key] = visual;
+                    }
+                    if (visual != null)
+                    {
+                        visual.UpdateEndpoints(from, to);
+                        ApplyStyle(visual, buildingHubColor, buildingHubThickness);
+                        visual.SetActive(true);
+                    }
+                }
+            }
+
+            // --- Hub -> Hub lines (from transit graph edges) ---
+            if (drawHubToHubConnections && simulationEngine != null && hubRegistry != null)
             {
                 hubRegistry.FetchHubs();
                 var hubs = hubRegistry.Hubs;
-                var connections = hubLayoutManager.ActivePreset.Connections;
+                var graph = simulationEngine.TransitGraph;
 
-                for (int p = 0; p < connections.Count; p++)
+                if (graph != null)
                 {
-                    var pair = connections[p];
-                    if (pair.hubA == null || pair.hubB == null) continue;
-
-                    int idxA = IndexOfHub(hubs, pair.hubA);
-                    int idxB = IndexOfHub(hubs, pair.hubB);
-                    if (idxA < 0 || idxB < 0) continue;
-
-                    var key = idxA < idxB ? (idxA, idxB) : (idxB, idxA);
-                    _currentHubHubKeys.Add(key);
-
-                    Vector2 a = RootToHolderSpace(GetHubLocalPosition(pair.hubA, root), root, hhParent);
-                    Vector2 b = RootToHolderSpace(GetHubLocalPosition(pair.hubB, root), root, hhParent);
-
-                    if (!_activeHubHub.TryGetValue(key, out IConnectionVisual visual))
+                    var edges = graph.Edges;
+                    for (int e = 0; e < edges.Count; e++)
                     {
-                        visual = Acquire(hhParent);
-                        if (visual == null) continue;
-                        _activeHubHub[key] = visual;
-                    }
+                        var edge = edges[e];
+                        int idxA = edge.FromId;
+                        int idxB = edge.ToId;
+                        if (idxA < 0 || idxA >= hubs.Count || idxB < 0 || idxB >= hubs.Count) continue;
 
-                    visual.UpdateEndpoints(a, b);
-                    if (useHubToHubColorOverride)
-                        ApplyColor(visual, hubToHubColor);
-                    visual.SetActive(true);
+                        var key = idxA < idxB ? (idxA, idxB) : (idxB, idxA);
+                        if (!_currentHubHubKeys.Add(key)) continue; // deduplicate A→B / B→A
+
+                        Vector2 a = RootToHolderSpace(GetHubLocalPosition(hubs[idxA], root), root, hhParent);
+                        Vector2 b = RootToHolderSpace(GetHubLocalPosition(hubs[idxB], root), root, hhParent);
+
+                        if (!_activeHubHub.TryGetValue(key, out IConnectionVisual visual))
+                        {
+                            visual = Acquire(hhParent);
+                            if (visual == null) continue;
+                            _activeHubHub[key] = visual;
+                        }
+
+                        visual.UpdateEndpoints(a, b);
+                        if (useHubToHubColorOverride)
+                            ApplyColor(visual, hubToHubColor);
+                        visual.SetActive(true);
+                    }
                 }
             }
 
@@ -194,6 +239,9 @@ namespace CityTwin.UI
 
             // --- Deactivate unused building-stop visuals ---
             RecycleStale(_buildingStopLines, _currentBuildingStopKeys);
+
+            // --- Deactivate unused building-hub visuals ---
+            RecycleStale(_buildingHubLines, _currentBuildingHubKeys);
 
             // --- Deactivate unused hub-hub visuals ---
             var toRemoveHubHub = new List<(int, int)>();
@@ -394,6 +442,7 @@ namespace CityTwin.UI
         public void ClearAll()
         {
             ClearDict(_buildingStopLines);
+            ClearDict(_buildingHubLines);
 
             foreach (var kv in _activeHubHub)
             {

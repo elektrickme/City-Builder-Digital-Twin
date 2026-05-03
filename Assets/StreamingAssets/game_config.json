@@ -20,7 +20,7 @@
     "distanceExponent": 1,
     "distanceFloor": 50,
     "distanceScale": 100,
-    "maxRoadDistance": 150,
+    "maxRoadDistance": 50,
     "qolBalancePenalty": 0.5,
     "qolCap": 80,
     "sizeBoostSmall": 1.2,
@@ -45,7 +45,7 @@
     "defaultConnectionRadius": 600
   },
   "stops": {
-    "spacing": 180,
+    "spacing": 250,
     "minDistanceFromNode": 30,
     "minDistanceBetweenStops": 30
   },

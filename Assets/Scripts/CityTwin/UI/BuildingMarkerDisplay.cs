@@ -89,6 +89,8 @@ namespace CityTwin.UI
                 {
                     multiplier = entry.haloScaleMultiplier;
                     haloColor = entry.haloColor;
+                    if (entry.sprite != null && icon != null)
+                        icon.sprite = entry.sprite;
                 }
             }
 

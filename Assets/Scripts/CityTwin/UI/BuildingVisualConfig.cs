@@ -15,6 +15,8 @@ namespace CityTwin.UI
         public class Entry
         {
             public string buildingId;
+            [Tooltip("Sprite shown on the building marker icon. If null, keeps the prefab default.")]
+            public Sprite sprite;
             public Color haloColor = Color.white;
             [Tooltip("Multiplier applied on top of the base halo scale.")]
             public float haloScaleMultiplier = 1f;

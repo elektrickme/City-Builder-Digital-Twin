@@ -43,6 +43,7 @@ public class MouseBuildingTester : MonoBehaviour
     [SerializeField] private bool pauseInputWhilePickerOpen = true;
     [SerializeField] private float pickerUiScale = 1f;
 
+
     private class ActiveTile
     {
         public string DebugTileId;
@@ -264,13 +265,15 @@ public class MouseBuildingTester : MonoBehaviour
         GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(scale, scale, 1f)) * oldMatrix;
 
         const float pad = 10f;
-        float width = Mathf.Min(560f, (Screen.width * inv) - pad * 2f);
-        float height = Mathf.Min(520f, (Screen.height * inv) - pad * 2f);
-        var rect = new Rect(pad, pad, width, height);
+        float leftWidth = Mathf.Min(560f, (Screen.width * inv) * 0.55f);
+        float rightWidth = Mathf.Min(360f, (Screen.width * inv) * 0.4f);
+        float height = Mathf.Min(620f, (Screen.height * inv) - pad * 2f);
 
-        GUI.Box(rect, "Debug Building Picker");
+        // ── Left panel: Building Picker ──
+        var leftRect = new Rect(pad, pad, leftWidth, height);
+        GUI.Box(leftRect, "Debug Building Picker");
 
-        GUILayout.BeginArea(new Rect(rect.x + pad, rect.y + 28f, rect.width - pad * 2f, rect.height - 28f - pad));
+        GUILayout.BeginArea(new Rect(leftRect.x + pad, leftRect.y + 28f, leftRect.width - pad * 2f, leftRect.height - 28f - pad));
 
         GUILayout.BeginHorizontal();
         GUILayout.Label("Filter", GUILayout.Width(40f));
@@ -288,6 +291,7 @@ public class MouseBuildingTester : MonoBehaviour
         {
             GUILayout.Label("No buildings found. Ensure `GameConfigLoader` is present and loaded.");
             GUILayout.EndArea();
+            GUI.matrix = oldMatrix;
             return;
         }
 
@@ -330,6 +334,80 @@ public class MouseBuildingTester : MonoBehaviour
         GUILayout.EndScrollView();
 
         GUILayout.EndArea();
+
+        // ── Right panel: Scoring Parameter Sliders ──
+        if (simulationEngine != null)
+        {
+            float rightX = (Screen.width * inv) - rightWidth - pad;
+            var rightRect = new Rect(rightX, pad, rightWidth, height);
+
+            // Dark semi-transparent background
+            var bgTex = Texture2D.whiteTexture;
+            var prevColor = GUI.color;
+            GUI.color = new Color(0.1f, 0.1f, 0.1f, 0.85f);
+            GUI.DrawTexture(rightRect, bgTex);
+            GUI.color = prevColor;
+
+            // Title
+            var titleStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 16,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.UpperCenter
+            };
+            titleStyle.normal.textColor = new Color(0.3f, 0.85f, 1f);
+            GUI.Label(new Rect(rightRect.x, rightRect.y + 6f, rightRect.width, 28f), "Scoring Parameters", titleStyle);
+
+            GUILayout.BeginArea(new Rect(rightRect.x + pad, rightRect.y + 32f, rightRect.width - pad * 2f, rightRect.height - 32f - pad));
+            _slidersScroll = GUILayout.BeginScrollView(_slidersScroll);
+
+            bool changed = false;
+            changed |= DrawSlider("Score Normalizer (Norm)",
+                "1 full contribution = NORM raw -> 100%. Higher = harder to fill pillars.",
+                simulationEngine.Norm, 1f, 500f, v => simulationEngine.Norm = v);
+            changed |= DrawSlider("Building Strength (Influence Ref Base)",
+                "Divides building base value. Higher = weaker per-building impact.",
+                simulationEngine.InfluenceRefBase, 0.1f, 100f, v => simulationEngine.InfluenceRefBase = v);
+            changed |= DrawSlider("Decay Reference Distance (m)",
+                "Distance where decay curve = 50%. Higher = buildings reach further.",
+                simulationEngine.InfluenceReferenceMeters, 0.1f, 100f, v => simulationEngine.InfluenceReferenceMeters = v);
+            changed |= DrawSlider("Distance Decay Steepness",
+                "Exponent for falloff curve. Higher = sharper drop-off with distance.",
+                simulationEngine.DistanceExponent, 0f, 5f, v => simulationEngine.DistanceExponent = v);
+            changed |= DrawSlider("Min Effective Distance",
+                "Floor in game units. Prevents near-zero path from inflating score.",
+                simulationEngine.DistanceFloor, 0f, 200f, v => simulationEngine.DistanceFloor = v);
+            changed |= DrawSlider("Units-to-Meters Scale",
+                "Game units / scale = meters. Controls how far 1 unit feels.",
+                simulationEngine.DistanceScale, 1f, 500f, v => simulationEngine.DistanceScale = v);
+            changed |= DrawSlider("Max Road Network Reach",
+                "Max path length along roads for scoring. Beyond = no influence.",
+                simulationEngine.MaxRoadDistance, 1f, 600f, v => simulationEngine.MaxRoadDistance = v);
+            changed |= DrawSlider("Road Connection Range",
+                "Max distance from building to road to count as connected.",
+                simulationEngine.RoadConnectRange, 1f, 1000f, v => simulationEngine.RoadConnectRange = v);
+            changed |= DrawSlider("QOL Inequality Penalty",
+                "City QOL -= penalty x (best hub - worst hub). Rewards balance.",
+                simulationEngine.QolBalancePenalty, 0f, 2f, v => simulationEngine.QolBalancePenalty = v);
+            changed |= DrawSlider("QOL Maximum Cap",
+                "Hard ceiling on final QOL score.",
+                simulationEngine.QolCap, 1f, 100f, v => simulationEngine.QolCap = v);
+            changed |= DrawSlider("Impact Radius - Small",
+                "How far small buildings search for stops to score through.",
+                simulationEngine.ImpactRadiusSmall, 1f, 400f, v => simulationEngine.ImpactRadiusSmall = v);
+            changed |= DrawSlider("Impact Radius - Medium",
+                "How far medium buildings search for stops to score through.",
+                simulationEngine.ImpactRadiusMedium, 1f, 400f, v => simulationEngine.ImpactRadiusMedium = v);
+            changed |= DrawSlider("Impact Radius - Large",
+                "How far large buildings search for stops to score through.",
+                simulationEngine.ImpactRadiusLarge, 1f, 400f, v => simulationEngine.ImpactRadiusLarge = v);
+
+            if (changed)
+                simulationEngine.RecalculateMetrics();
+
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
+        }
 
         GUI.matrix = oldMatrix;
     }
@@ -380,6 +458,55 @@ public class MouseBuildingTester : MonoBehaviour
                 return all[i] as RectTransform;
         }
         return null;
+    }
+
+    private Vector2 _slidersScroll;
+
+    private static bool DrawSlider(string label, string description, float current, float min, float max, System.Action<float> setter)
+    {
+        var labelStyle = new GUIStyle(GUI.skin.label);
+        labelStyle.normal.textColor = Color.white;
+        labelStyle.fontStyle = FontStyle.Bold;
+
+        var descStyle = new GUIStyle(GUI.skin.label);
+        descStyle.normal.textColor = new Color(0.7f, 0.7f, 0.7f);
+        descStyle.fontSize = 10;
+        descStyle.wordWrap = true;
+
+        var valueStyle = new GUIStyle(GUI.skin.label);
+        valueStyle.normal.textColor = new Color(1f, 0.9f, 0.3f);
+        valueStyle.alignment = TextAnchor.MiddleRight;
+
+        GUILayout.BeginVertical(GUI.skin.box);
+
+        GUILayout.BeginHorizontal();
+        GUILayout.Label(label, labelStyle, GUILayout.ExpandWidth(true));
+        GUILayout.Label(current.ToString("F2"), valueStyle, GUILayout.Width(70f));
+        GUILayout.EndHorizontal();
+
+        if (!string.IsNullOrEmpty(description))
+            GUILayout.Label(description, descStyle);
+
+        // Filled bar behind slider
+        var sliderRect = GUILayoutUtility.GetRect(GUIContent.none, GUI.skin.horizontalSlider, GUILayout.Height(16f));
+        float fill = Mathf.InverseLerp(min, max, current);
+        var barColor = GUI.color;
+        GUI.color = new Color(0.2f, 0.2f, 0.2f, 0.8f);
+        GUI.DrawTexture(sliderRect, Texture2D.whiteTexture);
+        GUI.color = new Color(0.3f, 0.75f, 1f, 0.6f);
+        GUI.DrawTexture(new Rect(sliderRect.x, sliderRect.y, sliderRect.width * fill, sliderRect.height), Texture2D.whiteTexture);
+        GUI.color = barColor;
+
+        float next = GUI.HorizontalSlider(sliderRect, current, min, max);
+
+        GUILayout.EndVertical();
+
+        if (!Mathf.Approximately(next, current))
+        {
+            setter(next);
+            return true;
+        }
+        return false;
     }
 }
 

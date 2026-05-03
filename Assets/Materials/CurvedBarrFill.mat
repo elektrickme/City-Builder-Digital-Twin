@@ -47,7 +47,7 @@ Material:
     - _ColorMask: 15
     - _EnableExternalAlpha: 0
     - _EndCapScale: 0.87
-    - _Fill: 0.468
+    - _Fill: 0.542
     - _Softness: 0.0217
     - _Stencil: 0
     - _StencilComp: 8
