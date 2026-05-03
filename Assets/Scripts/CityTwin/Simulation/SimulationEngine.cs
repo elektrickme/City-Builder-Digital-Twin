@@ -157,6 +157,16 @@ namespace CityTwin.Simulation
             _buildingCatalog = catalog ?? new List<BuildingDefinition>();
         }
 
+        /// <summary>Stop-search seed radius from catalog impact size and current scoring sliders.</summary>
+        public bool TryGetImpactSearchRadius(string buildingId, out float radius)
+        {
+            radius = 0f;
+            var b = GetBuilding(buildingId);
+            if (b == null) return false;
+            radius = GetImpactRadius(b);
+            return true;
+        }
+
         public void SetConfig(GameConfig.ScoringData scoring, GameConfig.AccessibilityData acc)
         {
             if (scoring != null)

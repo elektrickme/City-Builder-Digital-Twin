@@ -41,7 +41,12 @@ public class MouseBuildingTester : MonoBehaviour
     [SerializeField] private bool enableBackquotePicker = true;
     [SerializeField] private Key togglePickerKey = Key.Backquote;
     [SerializeField] private bool pauseInputWhilePickerOpen = true;
-    [SerializeField] private float pickerUiScale = 1f;
+    [Tooltip("Master IMGUI scale for the whole debug menu (also adjustable from the bar when the menu is open).")]
+    [SerializeField, Range(0.5f, 5f)] private float pickerUiScale = 1f;
+
+    private const float MenuScaleMin = 0.5f;
+    private const float MenuScaleMax = 5f;
+    private const float MasterScaleBarScreenH = 38f;
 
 
     private class ActiveTile
@@ -61,6 +66,9 @@ public class MouseBuildingTester : MonoBehaviour
     private bool _pickerOpen;
     private Vector2 _pickerScroll;
     private string _pickerFilter = "";
+    private string _pickerHaloSyncBuildingId;
+    private float _pickerHaloSlider = 1f;
+    private Texture2D _pickerRingTexture;
 
     private void Awake()
     {
@@ -258,44 +266,80 @@ public class MouseBuildingTester : MonoBehaviour
     {
         if (!enableBackquotePicker || !_pickerOpen) return;
 
-        float scale = Mathf.Clamp(pickerUiScale, 1f, 20f);
+        const float pad = 10f;
+        DrawDebugMenuMasterScaleBar(pad);
+
+        float scale = Mathf.Clamp(pickerUiScale, MenuScaleMin, MenuScaleMax);
+        pickerUiScale = scale;
         float inv = 1f / scale;
 
         var oldMatrix = GUI.matrix;
         GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(scale, scale, 1f)) * oldMatrix;
 
-        const float pad = 10f;
-        float leftWidth = Mathf.Min(560f, (Screen.width * inv) * 0.55f);
+        float reservedTopScreen = pad + MasterScaleBarScreenH;
+        float topLogical = reservedTopScreen * inv;
+        float logicalScreenH = Screen.height * inv;
+        float leftWidth = Mathf.Min(680f, (Screen.width * inv) * 0.58f);
         float rightWidth = Mathf.Min(360f, (Screen.width * inv) * 0.4f);
-        float height = Mathf.Min(620f, (Screen.height * inv) - pad * 2f);
+        float height = Mathf.Max(200f, logicalScreenH - topLogical - pad);
 
         // ── Left panel: Building Picker ──
-        var leftRect = new Rect(pad, pad, leftWidth, height);
+        var leftRect = new Rect(pad, topLogical, leftWidth, height);
         GUI.Box(leftRect, "Debug Building Picker");
 
-        GUILayout.BeginArea(new Rect(leftRect.x + pad, leftRect.y + 28f, leftRect.width - pad * 2f, leftRect.height - 28f - pad));
+        float leftInnerH = leftRect.height - 28f - pad;
+        GUILayout.BeginArea(new Rect(leftRect.x + pad, leftRect.y + 28f, leftRect.width - pad * 2f, leftInnerH));
+        GUILayout.BeginVertical(GUILayout.Height(leftInnerH));
 
         GUILayout.BeginHorizontal();
         GUILayout.Label("Filter", GUILayout.Width(40f));
         _pickerFilter = GUILayout.TextField(_pickerFilter ?? "", GUILayout.MinWidth(120f));
         GUILayout.FlexibleSpace();
-        GUILayout.Label($"Selected: {(_currentBuildingId ?? "(none)")}");
+        if (GUILayout.Button("Reset halos", GUILayout.Width(88f)) && buildingSpawner != null)
+        {
+            buildingSpawner.ClearDebugHaloScales();
+            _pickerHaloSlider = BuildingSpawner.DebugHaloMultiplierDefault;
+            simulationEngine?.RecalculateMetrics();
+        }
         if (GUILayout.Button("Close", GUILayout.Width(70f)))
             _pickerOpen = false;
         GUILayout.EndHorizontal();
-
-        GUILayout.Space(6f);
 
         var buildings = configLoader != null ? configLoader.Config?.Buildings : null;
         if (buildings == null || buildings.Length == 0)
         {
             GUILayout.Label("No buildings found. Ensure `GameConfigLoader` is present and loaded.");
+            GUILayout.EndVertical();
             GUILayout.EndArea();
             GUI.matrix = oldMatrix;
             return;
         }
 
-        _pickerScroll = GUILayout.BeginScrollView(_pickerScroll, GUI.skin.box);
+        if (_currentBuildingId != _pickerHaloSyncBuildingId)
+        {
+            _pickerHaloSyncBuildingId = _currentBuildingId;
+            if (buildingSpawner != null && !string.IsNullOrEmpty(_currentBuildingId))
+                _pickerHaloSlider = buildingSpawner.GetDebugHaloScale(_currentBuildingId);
+            else
+                _pickerHaloSlider = BuildingSpawner.DebugHaloMultiplierDefault;
+        }
+
+        BuildingDefinition selectedDef = null;
+        if (!string.IsNullOrEmpty(_currentBuildingId))
+        {
+            for (int si = 0; si < buildings.Length; si++)
+            {
+                var cand = buildings[si];
+                if (cand != null && cand.Id == _currentBuildingId) { selectedDef = cand; break; }
+            }
+        }
+
+        DrawPickerSelectionPreview(selectedDef);
+
+        GUILayout.Space(4f);
+        GUILayout.Label("Click Pick or a row to select. Halo scale affects marker size, connection range, and footprint radius.", GUI.skin.box);
+
+        _pickerScroll = GUILayout.BeginScrollView(_pickerScroll, GUI.skin.box, GUILayout.ExpandHeight(true));
         for (int i = 0; i < buildings.Length; i++)
         {
             var b = buildings[i];
@@ -310,11 +354,25 @@ public class MouseBuildingTester : MonoBehaviour
 
             GUILayout.BeginVertical(GUI.skin.box);
 
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Pick", GUILayout.Width(54f)))
+            GUILayout.BeginHorizontal(GUILayout.Height(50f));
+            var thumbRect = GUILayoutUtility.GetRect(44f, 44f, GUILayout.Width(44f), GUILayout.Height(44f));
+            DrawPickerListThumb(thumbRect, b.Id);
+
+            if (GUILayout.Button("Pick", GUILayout.Width(48f), GUILayout.Height(44f)))
                 _currentBuildingId = b.Id;
+
+            GUILayout.BeginVertical();
             GUILayout.Label($"{name}  ({b.Id})", GUILayout.ExpandWidth(true));
-            GUILayout.Label($"Price: {b.Price}", GUILayout.Width(90f));
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"Price: {b.Price}", GUILayout.Width(78f));
+            float haloPx = 0f;
+            if (buildingSpawner != null && buildingSpawner.TryGetEstimatedBuildingRadius(b.Id, out haloPx))
+                GUILayout.Label($"Halo ~{haloPx:F0}px", GUILayout.Width(92f));
+            if (simulationEngine != null && simulationEngine.TryGetImpactSearchRadius(b.Id, out float impactR))
+                GUILayout.Label($"Stops r={impactR:F0}", GUILayout.Width(88f));
+            GUILayout.EndHorizontal();
+            GUILayout.EndVertical();
+
             GUILayout.EndHorizontal();
 
             if (b.BaseValues != null)
@@ -333,13 +391,14 @@ public class MouseBuildingTester : MonoBehaviour
         }
         GUILayout.EndScrollView();
 
+        GUILayout.EndVertical();
         GUILayout.EndArea();
 
         // ── Right panel: Scoring Parameter Sliders ──
         if (simulationEngine != null)
         {
             float rightX = (Screen.width * inv) - rightWidth - pad;
-            var rightRect = new Rect(rightX, pad, rightWidth, height);
+            var rightRect = new Rect(rightX, topLogical, rightWidth, height);
 
             // Dark semi-transparent background
             var bgTex = Texture2D.whiteTexture;
@@ -358,8 +417,10 @@ public class MouseBuildingTester : MonoBehaviour
             titleStyle.normal.textColor = new Color(0.3f, 0.85f, 1f);
             GUI.Label(new Rect(rightRect.x, rightRect.y + 6f, rightRect.width, 28f), "Scoring Parameters", titleStyle);
 
-            GUILayout.BeginArea(new Rect(rightRect.x + pad, rightRect.y + 32f, rightRect.width - pad * 2f, rightRect.height - 32f - pad));
-            _slidersScroll = GUILayout.BeginScrollView(_slidersScroll);
+            float rightInnerH = rightRect.height - 32f - pad;
+            GUILayout.BeginArea(new Rect(rightRect.x + pad, rightRect.y + 32f, rightRect.width - pad * 2f, rightInnerH));
+            GUILayout.BeginVertical(GUILayout.Height(rightInnerH));
+            _slidersScroll = GUILayout.BeginScrollView(_slidersScroll, GUI.skin.box, GUILayout.ExpandHeight(true));
 
             bool changed = false;
             changed |= DrawSlider("Score Normalizer (Norm)",
@@ -406,10 +467,166 @@ public class MouseBuildingTester : MonoBehaviour
                 simulationEngine.RecalculateMetrics();
 
             GUILayout.EndScrollView();
+            GUILayout.EndVertical();
             GUILayout.EndArea();
         }
 
         GUI.matrix = oldMatrix;
+    }
+
+    /// <summary>Drawn in screen space (not affected by <see cref="pickerUiScale"/>) so the control stays usable at any zoom.</summary>
+    private void DrawDebugMenuMasterScaleBar(float pad)
+    {
+        Matrix4x4 prev = GUI.matrix;
+        GUI.matrix = Matrix4x4.identity;
+
+        float w = Mathf.Max(120f, Screen.width - pad * 2f);
+        var barRect = new Rect(pad, pad, w, MasterScaleBarScreenH);
+        var oc = GUI.color;
+        GUI.color = new Color(0.06f, 0.07f, 0.09f, 0.94f);
+        GUI.DrawTexture(barRect, Texture2D.whiteTexture);
+        GUI.color = oc;
+
+        GUILayout.BeginArea(new Rect(barRect.x + 8f, barRect.y + 6f, barRect.width - 16f, barRect.height - 12f));
+        GUILayout.BeginHorizontal();
+        var labelStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold };
+        GUILayout.Label("Menu scale", labelStyle, GUILayout.Width(92f));
+        pickerUiScale = GUILayout.HorizontalSlider(pickerUiScale, MenuScaleMin, MenuScaleMax, GUILayout.ExpandWidth(true));
+        pickerUiScale = Mathf.Clamp(pickerUiScale, MenuScaleMin, MenuScaleMax);
+        GUILayout.Label($"{pickerUiScale:F2}×", GUILayout.Width(48f));
+        GUILayout.EndHorizontal();
+        GUILayout.EndArea();
+
+        GUI.matrix = prev;
+    }
+
+    private void DrawPickerSelectionPreview(BuildingDefinition selected)
+    {
+        GUILayout.BeginVertical(GUI.skin.box);
+        if (selected == null)
+        {
+            GUILayout.Label(string.IsNullOrEmpty(_currentBuildingId)
+                ? "No building selected — pick one below or use keys 1–4."
+                : $"Unknown id '{_currentBuildingId}' — not in loaded config.");
+            GUILayout.EndVertical();
+            return;
+        }
+
+        var titleStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, fontSize = 13 };
+        GUILayout.Label($"{GetBuildingDisplayName(selected)}  ({selected.Id})", titleStyle);
+
+        GUILayout.BeginHorizontal();
+        var previewRect = GUILayoutUtility.GetRect(120f, 120f, GUILayout.Width(120f), GUILayout.Height(120f));
+        float haloPx = 32f;
+        if (buildingSpawner != null)
+            buildingSpawner.TryGetEstimatedBuildingRadius(selected.Id, out haloPx);
+        DrawPickerPreviewSquare(previewRect, selected.Id, haloPx);
+
+        GUILayout.BeginVertical(GUILayout.ExpandWidth(true));
+        if (buildingSpawner != null)
+        {
+            DrawSlider(
+                "Halo multiplier (×)",
+                "Applied to Halo Area scale on every placed marker of this type. 1× = prefab + catalog defaults. Also drives connection radius and footprints.",
+                _pickerHaloSlider,
+                BuildingSpawner.DebugHaloMultiplierMin,
+                BuildingSpawner.DebugHaloMultiplierMax,
+                v =>
+                {
+                    _pickerHaloSlider = v;
+                    buildingSpawner.SetDebugHaloScale(selected.Id, v);
+                    simulationEngine?.RecalculateMetrics();
+                });
+            buildingSpawner.TryGetEstimatedBuildingRadius(selected.Id, out haloPx);
+            GUILayout.Label($"Effective halo radius ~{haloPx:F0}px (table units)", GUI.skin.label);
+        }
+        else
+        {
+            GUILayout.Label("Assign BuildingSpawner to tweak halo multiplier on spawned markers.");
+        }
+
+        if (simulationEngine != null && simulationEngine.TryGetImpactSearchRadius(selected.Id, out float impactR))
+            GUILayout.Label($"Stop search radius ({selected.ImpactSize}): {impactR:F0} units (see scoring panel sliders)", GUI.skin.label);
+
+        GUILayout.EndVertical();
+        GUILayout.EndHorizontal();
+        GUILayout.EndVertical();
+    }
+
+    private void DrawPickerListThumb(Rect r, string buildingId)
+    {
+        var oc = GUI.color;
+        GUI.color = new Color(0.15f, 0.16f, 0.2f, 1f);
+        GUI.DrawTexture(r, Texture2D.whiteTexture);
+        GUI.color = oc;
+
+        if (buildingSpawner != null && buildingSpawner.TryGetPreviewSprite(buildingId, out var sp) && sp != null)
+        {
+            float inset = 4f;
+            var ir = new Rect(r.x + inset, r.y + inset, r.width - inset * 2f, r.height - inset * 2f);
+            DrawPickerSprite(sp, ir);
+        }
+        else
+        {
+            var small = new GUIStyle(GUI.skin.label) { fontSize = 9, alignment = TextAnchor.MiddleCenter, wordWrap = true };
+            GUI.Label(r, buildingId.Length > 10 ? buildingId.Substring(0, 10) + "…" : buildingId, small);
+        }
+    }
+
+    private void DrawPickerPreviewSquare(Rect r, string buildingId, float haloWorldPx)
+    {
+        var oc = GUI.color;
+        GUI.color = new Color(0.1f, 0.11f, 0.14f, 1f);
+        GUI.DrawTexture(r, Texture2D.whiteTexture);
+        GUI.color = oc;
+
+        Vector2 center = r.center;
+        float t = Mathf.InverseLerp(8f, 150f, Mathf.Clamp(haloWorldPx, 8f, 200f));
+        float ringDiameter = Mathf.Lerp(28f, Mathf.Min(r.width, r.height) - 6f, t);
+        var ringRect = new Rect(center.x - ringDiameter * 0.5f, center.y - ringDiameter * 0.5f, ringDiameter, ringDiameter);
+        GUI.color = new Color(0.2f, 0.92f, 0.55f, 0.9f);
+        GUI.DrawTexture(ringRect, GetPickerRingTexture(), ScaleMode.StretchToFill);
+        GUI.color = oc;
+
+        if (buildingSpawner != null && buildingSpawner.TryGetPreviewSprite(buildingId, out var sp) && sp != null)
+        {
+            float iw = Mathf.Min(76f, r.width * 0.62f);
+            DrawPickerSprite(sp, new Rect(center.x - iw * 0.5f, center.y - iw * 0.5f, iw, iw));
+        }
+    }
+
+    private static void DrawPickerSprite(Sprite sprite, Rect r)
+    {
+        if (sprite == null || sprite.texture == null) return;
+        Rect tr = sprite.textureRect;
+        float tw = sprite.texture.width;
+        float th = sprite.texture.height;
+        var uv = new Rect(tr.x / tw, tr.y / th, tr.width / tw, tr.height / th);
+        GUI.DrawTextureWithTexCoords(r, sprite.texture, uv);
+    }
+
+    private Texture2D GetPickerRingTexture()
+    {
+        if (_pickerRingTexture != null) return _pickerRingTexture;
+
+        const int n = 128;
+        _pickerRingTexture = new Texture2D(n, n, TextureFormat.ARGB32, false);
+        float cx = (n - 1) * 0.5f;
+        float cy = (n - 1) * 0.5f;
+        float inner = n * 0.36f;
+        float outer = n * 0.48f;
+        for (int y = 0; y < n; y++)
+        {
+            for (int x = 0; x < n; x++)
+            {
+                float d = Vector2.Distance(new Vector2(x, y), new Vector2(cx, cy));
+                float a = d >= inner && d <= outer ? 0.95f : 0f;
+                _pickerRingTexture.SetPixel(x, y, new Color(1f, 1f, 1f, a));
+            }
+        }
+        _pickerRingTexture.Apply();
+        _pickerRingTexture.hideFlags = HideFlags.DontSave;
+        return _pickerRingTexture;
     }
 
     private string GetBuildingDisplayName(BuildingDefinition b)

@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using UnityEngine;
+using DG.Tweening;
 using CityTwin.Config;
 using CityTwin.Localization;
 
@@ -8,7 +9,7 @@ namespace CityTwin.UI
 {
     /// <summary>
     /// Cycles through child TutorialPopup GameObjects one at a time.
-    /// Each step displays localized text for a config-driven duration.
+    /// Each step displays localized text for a config-driven duration, with DOTween fade/pop in and out.
     /// Fires OnTutorialComplete when all steps finish.
     /// </summary>
     public class TutorialSequenceController : MonoBehaviour
@@ -80,12 +81,17 @@ namespace CityTwin.UI
 
                 string text = localization != null ? localization.GetString(step.textKey) : step.textKey;
                 popup.SetText(text);
-                popup.Show();
+
+                var showTween = popup.PlayShowTween();
+                if (showTween != null)
+                    yield return showTween.WaitForCompletion(true);
 
                 float duration = step.durationSeconds > 0 ? step.durationSeconds : 5f;
                 yield return new WaitForSeconds(duration);
 
-                popup.Hide();
+                var hideTween = popup.PlayHideTween();
+                if (hideTween != null)
+                    yield return hideTween.WaitForCompletion(true);
             }
 
             _isRunning = false;
@@ -100,7 +106,7 @@ namespace CityTwin.UI
             foreach (var p in popups)
             {
                 if (p != null)
-                    p.Hide();
+                    p.HideImmediate();
             }
         }
     }

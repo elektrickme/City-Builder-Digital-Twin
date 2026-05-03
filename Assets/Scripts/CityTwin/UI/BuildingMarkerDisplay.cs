@@ -34,6 +34,7 @@ namespace CityTwin.UI
         private static readonly Color InactiveColor = new Color(0.4f, 0.4f, 0.4f, 0.95f);  // #666
 
         private string _currentBuildingId;
+        private float _runtimeHaloMultiplier = 1f;
         private bool _isPlacementInvalid;
         private Color _invalidHaloColor = Color.red;
         private Color _configuredHaloColor = Color.white;
@@ -49,6 +50,26 @@ namespace CityTwin.UI
         public void SetOverBudget(bool isOverBudget)
         {
             if (overBudgetIndicator != null) overBudgetIndicator.SetActive(isOverBudget);
+            if (!isOverBudget) return;
+
+            // Budget overlay sits above the main building art; re-apply sprite/halo so the main image matches this building.
+            EnsureReferences();
+            if (string.IsNullOrEmpty(_currentBuildingId))
+                TryInferBuildingIdFromMarkerName();
+            if (!string.IsNullOrEmpty(_currentBuildingId))
+            {
+                ApplyVisuals(_currentBuildingId);
+                if (icon != null)
+                    icon.enabled = true;
+            }
+        }
+
+        private void TryInferBuildingIdFromMarkerName()
+        {
+            string n = gameObject.name;
+            int u = n.IndexOf('_');
+            if (u > 0)
+                _currentBuildingId = n.Substring(0, u);
         }
 
         public void SetBuilding(string buildingId)
@@ -94,9 +115,9 @@ namespace CityTwin.UI
                 }
             }
 
-            float scale = baseHaloScale * multiplier;
+            float combined = baseHaloScale * multiplier * _runtimeHaloMultiplier;
             if (haloRoot != null)
-                haloRoot.localScale = new Vector3(scale, scale, 1f);
+                haloRoot.localScale = new Vector3(combined, combined, 1f);
 
             if (haloColor.HasValue)
             {
@@ -125,13 +146,30 @@ namespace CityTwin.UI
             ApplyHaloColorState();
         }
 
+        /// <summary>Multiplier on <see cref="haloRoot"/> localScale; 1 = prefab/catalog default.</summary>
+        public void SetRuntimeHaloMultiplier(float multiplier)
+        {
+            _runtimeHaloMultiplier = Mathf.Clamp(multiplier, BuildingSpawner.DebugHaloMultiplierMin, BuildingSpawner.DebugHaloMultiplierMax);
+            if (!string.IsNullOrEmpty(_currentBuildingId))
+                ApplyVisuals(_currentBuildingId);
+        }
+
         public float GetVisualRadiusForBuilding(string buildingId)
         {
             EnsureReferences();
             float multiplier = GetHaloScaleMultiplier(buildingId);
             float radius = GetBaseHaloRadius();
-            float scale = Mathf.Max(0.01f, baseHaloScale * multiplier);
-            return Mathf.Max(1f, radius * scale);
+            float scaleFactor = Mathf.Max(0.01f, baseHaloScale * multiplier * _runtimeHaloMultiplier);
+            return Mathf.Max(1f, radius * scaleFactor);
+        }
+
+        /// <summary>Catalog sprite for previews (uses the same <see cref="BuildingVisualConfig"/> as markers).</summary>
+        public Sprite TryGetCatalogSprite(string buildingId)
+        {
+            EnsureReferences();
+            if (visualConfig == null || string.IsNullOrEmpty(buildingId)) return null;
+            var entry = visualConfig.GetEntry(buildingId);
+            return entry?.sprite;
         }
 
         public bool TryGetCurrentVisualRadius(RectTransform inSpace, out float radius)

@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using DG.Tweening;
 using CityTwin.Core;
 using CityTwin.Simulation;
 
@@ -56,6 +57,11 @@ namespace CityTwin.UI
         [SerializeField] private GameObject stopMarkerPrefab;
         [SerializeField] private float stopMarkerSize = 12f;
         [SerializeField] private bool drawStops = true;
+        [SerializeField] private bool stopPulse = true;
+        [Tooltip("Uniform scale peak for the breath (1 = no growth). Typical 1.04–1.12.")]
+        [SerializeField] private float stopPulseScale = 1.08f;
+        [Tooltip("Seconds for one leg of the pulse (scale up); Yoyo doubles for a full in-out cycle.")]
+        [SerializeField] private float stopPulseDuration = 0.75f;
 
         private readonly Dictionary<(string tileId, int stopIdx), IConnectionVisual> _buildingStopLines =
             new Dictionary<(string, int), IConnectionVisual>();
@@ -95,6 +101,7 @@ namespace CityTwin.UI
         {
             if (simulationEngine != null)
                 simulationEngine.OnMetricsChanged -= Refresh;
+            KillStopMarkerTweens();
         }
 
         private void Refresh()
@@ -385,6 +392,7 @@ namespace CityTwin.UI
             {
                 if (rt != null)
                 {
+                    ResetStopMarkerTween(rt);
                     rt.gameObject.SetActive(false);
                     _stopMarkerPool.Add(rt);
                 }
@@ -411,8 +419,37 @@ namespace CityTwin.UI
                 marker.localRotation = Quaternion.Euler(0, 0, 45f);
                 marker.gameObject.SetActive(true);
                 _activeStopMarkers.Add(marker);
+                StartStopMarkerPulse(marker);
             }
 
+        }
+
+        private void StartStopMarkerPulse(RectTransform marker)
+        {
+            if (marker == null || !stopPulse) return;
+            marker.DOKill(false);
+            marker.localScale = Vector3.one;
+            float peak = Mathf.Clamp(stopPulseScale, 1.002f, 2f);
+            float dur = Mathf.Max(0.05f, stopPulseDuration);
+            marker.DOScale(peak, dur)
+                .SetEase(Ease.InOutSine)
+                .SetLoops(-1, LoopType.Yoyo)
+                .SetTarget(marker);
+        }
+
+        private void KillStopMarkerTweens()
+        {
+            for (int i = 0; i < _activeStopMarkers.Count; i++)
+                ResetStopMarkerTween(_activeStopMarkers[i]);
+            for (int i = 0; i < _stopMarkerPool.Count; i++)
+                ResetStopMarkerTween(_stopMarkerPool[i]);
+        }
+
+        private static void ResetStopMarkerTween(RectTransform rt)
+        {
+            if (rt == null) return;
+            rt.DOKill(false);
+            rt.localScale = Vector3.one;
         }
 
         private RectTransform AcquireStopMarker(RectTransform parent)
@@ -423,6 +460,7 @@ namespace CityTwin.UI
                 if (rt != null)
                 {
                     _stopMarkerPool.RemoveAt(i);
+                    ResetStopMarkerTween(rt);
                     if (rt.parent != parent) rt.SetParent(parent, false);
                     return rt;
                 }
@@ -458,6 +496,7 @@ namespace CityTwin.UI
             {
                 if (rt != null)
                 {
+                    ResetStopMarkerTween(rt);
                     rt.gameObject.SetActive(false);
                     _stopMarkerPool.Add(rt);
                 }

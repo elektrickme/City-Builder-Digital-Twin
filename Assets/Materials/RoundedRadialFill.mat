@@ -28,7 +28,7 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _MainTex:
-        m_Texture: {fileID: 0}
+        m_Texture: {fileID: 2800000, guid: cd743a800a6ec4640836355e077a9174, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _MaskTex:
@@ -43,12 +43,12 @@ Material:
     m_Floats:
     - _ColorMask: 15
     - _EnableExternalAlpha: 0
-    - _EndCapScale: 1.5
-    - _Fill: 0
-    - _RingRadius: 0
-    - _RingThickness: 0.065
+    - _EndCapScale: 0.94
+    - _Fill: 0.104
+    - _RingRadius: 0.451
+    - _RingThickness: 0.043
     - _StartAngle: 0
-    - _StartCapScale: 1
+    - _StartCapScale: 0.94
     - _Stencil: 0
     - _StencilComp: 8
     - _StencilOp: 0

@@ -27,6 +27,11 @@ namespace CityTwin.UI
         [SerializeField] private bool centerOrigin = true;
 
         private readonly Dictionary<string, GameObject> _spawned = new Dictionary<string, GameObject>();
+        private readonly Dictionary<string, float> _debugHaloScaleByBuildingId = new Dictionary<string, float>();
+
+        public const float DebugHaloMultiplierMin = 0.25f;
+        public const float DebugHaloMultiplierMax = 5f;
+        public const float DebugHaloMultiplierDefault = 1f;
 
         private void Awake()
         {
@@ -119,7 +124,11 @@ namespace CityTwin.UI
             }
 
             var display = instance.GetComponentInChildren<BuildingMarkerDisplay>(true);
-            if (display != null) display.SetBuilding(pose.BuildingId);
+            if (display != null)
+            {
+                display.SetBuilding(pose.BuildingId);
+                display.SetRuntimeHaloMultiplier(GetDebugHaloScale(pose.BuildingId));
+            }
 
             _spawned[engineTileId] = instance;
             Debug.Log($"[BuildingSpawner] Spawned {pose.BuildingId} at ({localPos.x:F0},{localPos.y:F0})");
@@ -191,8 +200,80 @@ namespace CityTwin.UI
             var display = buildingMarkerPrefab.GetComponentInChildren<BuildingMarkerDisplay>(true);
             if (display == null) return false;
 
+            radius = display.GetVisualRadiusForBuilding(buildingId) * GetDebugHaloScale(buildingId);
+            return radius > 0.001f;
+        }
+
+        /// <summary>Prefab halo radius without debug scale (for picker preview normalization).</summary>
+        public bool TryGetBaseVisualRadius(string buildingId, out float radius)
+        {
+            radius = 0f;
+            if (buildingMarkerPrefab == null) return false;
+            var display = buildingMarkerPrefab.GetComponentInChildren<BuildingMarkerDisplay>(true);
+            if (display == null) return false;
             radius = display.GetVisualRadiusForBuilding(buildingId);
             return radius > 0.001f;
+        }
+
+        public float GetDebugHaloScale(string buildingId)
+        {
+            if (string.IsNullOrEmpty(buildingId)) return DebugHaloMultiplierDefault;
+            return _debugHaloScaleByBuildingId.TryGetValue(buildingId, out float v) ? v : DebugHaloMultiplierDefault;
+        }
+
+        public void SetDebugHaloScale(string buildingId, float multiplier)
+        {
+            if (string.IsNullOrEmpty(buildingId)) return;
+            multiplier = Mathf.Clamp(multiplier, DebugHaloMultiplierMin, DebugHaloMultiplierMax);
+            _debugHaloScaleByBuildingId[buildingId] = multiplier;
+            ApplyDebugHaloScaleToSpawnedMarkers(buildingId);
+        }
+
+        public void ClearDebugHaloScales()
+        {
+            _debugHaloScaleByBuildingId.Clear();
+            ApplyDebugHaloScaleToSpawnedMarkers(null);
+        }
+
+        private static string ParseBuildingIdFromSpawnName(string instanceName)
+        {
+            if (string.IsNullOrEmpty(instanceName)) return null;
+            int u = instanceName.IndexOf('_');
+            return u > 0 ? instanceName.Substring(0, u) : null;
+        }
+
+        private void ApplyDebugHaloScaleToSpawnedMarkers(string onlyBuildingIdOrNull)
+        {
+            bool touched = false;
+            foreach (var kv in _spawned)
+            {
+                var go = kv.Value;
+                if (go == null) continue;
+                string bid = ParseBuildingIdFromSpawnName(go.name);
+                if (string.IsNullOrEmpty(bid)) continue;
+                if (onlyBuildingIdOrNull != null && !string.Equals(bid, onlyBuildingIdOrNull, System.StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var display = go.GetComponentInChildren<BuildingMarkerDisplay>(true);
+                if (display != null)
+                {
+                    display.SetRuntimeHaloMultiplier(GetDebugHaloScale(bid));
+                    touched = true;
+                }
+            }
+
+            if (touched)
+                Canvas.ForceUpdateCanvases();
+        }
+
+        public bool TryGetPreviewSprite(string buildingId, out Sprite sprite)
+        {
+            sprite = null;
+            if (buildingMarkerPrefab == null) return false;
+            var display = buildingMarkerPrefab.GetComponentInChildren<BuildingMarkerDisplay>(true);
+            if (display == null) return false;
+            sprite = display.TryGetCatalogSprite(buildingId);
+            return sprite != null;
         }
 
         public bool TryGetMarkerVisualRadius(string engineTileId, out float radius)

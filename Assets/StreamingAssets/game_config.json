@@ -69,8 +69,9 @@
     { "id": "fire_station", "category": "HealthSafety", "impactSize": "Medium", "importance": 0.9, "price": 300, "connectionRadius": 800, "baseValues": { "environment": 0, "economy": 0, "healthSafety": 7, "cultureEdu": 0 }, "localizationKey": "building.fire_station.name" },
     { "id": "hospital", "category": "HealthSafety", "impactSize": "Large", "importance": 1.0, "price": 600, "connectionRadius": 1000, "baseValues": { "environment": 0, "economy": 0, "healthSafety": 10, "cultureEdu": 0 }, "localizationKey": "building.hospital.name" },
     { "id": "school", "category": "CultureEdu", "impactSize": "Small", "importance": 1.0, "price": 120, "connectionRadius": 600, "baseValues": { "environment": 0, "economy": 0, "healthSafety": 0, "cultureEdu": 5 }, "localizationKey": "building.school.name" },
+    { "id": "library", "category": "CultureEdu", "impactSize": "Medium", "importance": 0.85, "price": 200, "connectionRadius": 800, "baseValues": { "environment": 0, "economy": 0, "healthSafety": 0, "cultureEdu": 6 }, "localizationKey": "building.library.name" },
     { "id": "museum", "category": "CultureEdu", "impactSize": "Medium", "importance": 0.8, "price": 250, "connectionRadius": 800, "baseValues": { "environment": 0, "economy": 0, "healthSafety": 0, "cultureEdu": 7 }, "localizationKey": "building.museum.name" },
-    { "id": "state_circus", "category": "CultureEdu", "impactSize": "Large", "importance": 0.6, "price": 520, "connectionRadius": 1000, "baseValues": { "environment": 0, "economy": 0, "healthSafety": 0, "cultureEdu": 10 }, "localizationKey": "building.state_circus.name" }
+    { "id": "circus", "category": "CultureEdu", "impactSize": "Large", "importance": 0.6, "price": 520, "connectionRadius": 1000, "baseValues": { "environment": 0, "economy": 0, "healthSafety": 0, "cultureEdu": 10 }, "localizationKey": "building.circus.name" }
   ],
   "map": {
     "nodes": [
@@ -122,8 +123,9 @@
       "building.fire_station.name": "Fire Station",
       "building.hospital.name": "Hospital",
       "building.school.name": "School",
+      "building.library.name": "Library",
       "building.museum.name": "Museum",
-      "building.state_circus.name": "State Circus",
+      "building.circus.name": "Circus",
       "ui.budget": "Budget",
       "ui.qol": "Quality of Life",
       "ui.timer": "Time",
@@ -162,8 +164,9 @@
       "building.fire_station.name": "Пожарная часть",
       "building.hospital.name": "Больница",
       "building.school.name": "Школа",
+      "building.library.name": "Библиотека",
       "building.museum.name": "Музей",
-      "building.state_circus.name": "Государственный цирк",
+      "building.circus.name": "Цирк",
       "ui.budget": "Бюджет",
       "ui.qol": "Качество жизни",
       "ui.timer": "Время",
@@ -202,8 +205,9 @@
       "building.fire_station.name": "Өрт сөндіру бөлімі",
       "building.hospital.name": "Аурухана",
       "building.school.name": "Мектеп",
+      "building.library.name": "Кітапхана",
       "building.museum.name": "Мұражай",
-      "building.state_circus.name": "Мемлекеттік цирк",
+      "building.circus.name": "Цирк",
       "ui.budget": "Бюджет",
       "ui.qol": "Өмір сапасы",
       "ui.timer": "Уақыт",
