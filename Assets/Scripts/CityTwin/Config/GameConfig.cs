@@ -87,8 +87,9 @@ namespace CityTwin.Config
             public float norm = 150f;
             /// <summary>Equal weight for all districts. HTML default 100000.</summary>
             public float equalDistrictWeight = 100000f;
-            /// <summary>Divides building baseValue to normalize raw influence. Higher = weaker per-building impact.</summary>
-            public float influenceRefBase = 20f;
+            /// <summary>Divides building baseValue to normalize raw influence. Higher = weaker per-building impact.
+            /// HTML reference default = 10. (Was 20 in Unity = half-impact bug.)</summary>
+            public float influenceRefBase = 10f;
             /// <summary>Reference distance (metres) for decay curve. At path = ref, curve = 0.5^exp. HTML default 15.</summary>
             public float influenceReferenceMeters = 15f;
             /// <summary>Exponent for distance decay curve. Higher = steeper falloff. HTML default 1.</summary>
@@ -169,6 +170,12 @@ namespace CityTwin.Config
             public float spacing = 60f;
             public float minDistanceFromNode = 30f;
             public float minDistanceBetweenStops = 30f;
+            /// <summary>0..1. Randomises each stop's offset within its own slot. HTML default 0.25.</summary>
+            public float spacingJitter = 0.25f;
+            /// <summary>0..1. Probability that a candidate stop is dropped. HTML default 0.30.</summary>
+            public float removalRate = 0.30f;
+            /// <summary>Seed for reproducible stop layout. -1 = non-deterministic.</summary>
+            public int seed = 1234;
         }
 
         [Serializable]

@@ -29,6 +29,9 @@ namespace CityTwin.UI
         private readonly Dictionary<string, GameObject> _spawned = new Dictionary<string, GameObject>();
         private readonly Dictionary<string, float> _debugHaloScaleByBuildingId = new Dictionary<string, float>();
 
+        /// <summary>Fires after a building marker is instantiated (engineTileId, buildingId, marker GameObject).</summary>
+        public event System.Action<string, string, GameObject> OnTileSpawned;
+
         public const float DebugHaloMultiplierMin = 0.25f;
         public const float DebugHaloMultiplierMax = 5f;
         public const float DebugHaloMultiplierDefault = 1f;
@@ -132,6 +135,7 @@ namespace CityTwin.UI
 
             _spawned[engineTileId] = instance;
             Debug.Log($"[BuildingSpawner] Spawned {pose.BuildingId} at ({localPos.x:F0},{localPos.y:F0})");
+            OnTileSpawned?.Invoke(engineTileId, pose.BuildingId, instance);
         }
 
         /// <summary>Move an existing building marker to the new pose (e.g. TUIO position update).</summary>

@@ -9,7 +9,7 @@
   },
   "budget": {
     "mode": "PerQuadrant",
-    "startingBudget": 3000
+    "startingBudget": 1000
   },
   "scoring": {
     "epsilonDistance": 1.0,

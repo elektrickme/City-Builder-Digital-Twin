@@ -1,3 +1,4 @@
+using DG.Tweening;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -18,6 +19,9 @@ namespace CityTwin.Core
         [SerializeField] private Image economyFillImage;
         [SerializeField] private Image cultureFillImage;
         [SerializeField] private Image environmentFillImage;
+
+        [Tooltip("Seconds for the metric arcs to tween to their new value (like the dashboard bars). 0 = instant.")]
+        [SerializeField] private float metricTweenDuration = 0.45f;
 
         [Tooltip("Draw gizmo sphere at hub position in editor / debug.")]
         public bool ShowDebugGizmos = true;
@@ -57,10 +61,35 @@ namespace CityTwin.Core
         {
             const float maxFill = 0.25f;
             const float metricCap = 100f; // values are percentages (0-100)
-            if (environmentFillImage != null) environmentFillImage.fillAmount = Mathf.Clamp01(env / metricCap) * maxFill;
-            if (economyFillImage != null) economyFillImage.fillAmount = Mathf.Clamp01(eco / metricCap) * maxFill;
-            if (safetyFillImage != null) safetyFillImage.fillAmount = Mathf.Clamp01(safety / metricCap) * maxFill;
-            if (cultureFillImage != null) cultureFillImage.fillAmount = Mathf.Clamp01(culture / metricCap) * maxFill;
+            TweenFill(environmentFillImage, Mathf.Clamp01(env / metricCap) * maxFill);
+            TweenFill(economyFillImage, Mathf.Clamp01(eco / metricCap) * maxFill);
+            TweenFill(safetyFillImage, Mathf.Clamp01(safety / metricCap) * maxFill);
+            TweenFill(cultureFillImage, Mathf.Clamp01(culture / metricCap) * maxFill);
+        }
+
+        /// <summary>Animate an arc's fillAmount to target, mirroring the dashboard bar easing. Kills any in-flight tween on that image first.</summary>
+        private void TweenFill(Image img, float target)
+        {
+            if (img == null) return;
+            img.DOKill();
+            if (metricTweenDuration <= 0f)
+            {
+                img.fillAmount = target;
+                return;
+            }
+            img.DOFillAmount(target, metricTweenDuration)
+               .SetEase(Ease.OutCubic)
+               .SetUpdate(true)         // animate even if timeScale is 0 (intro/pause safe)
+               .SetTarget(img);
+        }
+
+        private void OnDisable()
+        {
+            // Stop tweens so pooled / disabled hubs don't leak DOTween references.
+            if (environmentFillImage != null) environmentFillImage.DOKill();
+            if (economyFillImage != null) economyFillImage.DOKill();
+            if (safetyFillImage != null) safetyFillImage.DOKill();
+            if (cultureFillImage != null) cultureFillImage.DOKill();
         }
 
         private void Start()

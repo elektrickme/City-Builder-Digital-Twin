@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
@@ -85,6 +86,44 @@ public class DashboardController : MonoBehaviour
             timerText.text = sessionTimer.FormatTime();
         if (coordinator != null && budgetText != null)
             budgetText.text = coordinator.Budget.ToString();
+    }
+
+    public enum Pillar { Environment, Economy, HealthSafety, CultureEdu, Qol }
+
+    /// <summary>Brief scale punch on a pillar bar to draw the eye after a placement.</summary>
+    public void PunchPillar(Pillar pillar, float strength = 0.18f, float duration = 0.35f)
+    {
+        RectTransform target = pillar switch
+        {
+            Pillar.Environment   => environmentFill   != null ? environmentFill.transform   as RectTransform : null,
+            Pillar.Economy       => economyFill       != null ? economyFill.transform       as RectTransform : null,
+            Pillar.HealthSafety  => healthSafetyFill  != null ? healthSafetyFill.transform  as RectTransform : null,
+            Pillar.CultureEdu    => cultureEduFill    != null ? cultureEduFill.transform    as RectTransform : null,
+            Pillar.Qol           => qolRadialFill     != null ? qolRadialFill.transform     as RectTransform : null,
+            _                    => null
+        };
+        if (target == null || !isActiveAndEnabled) return;
+        StopCoroutine(nameof(PunchRoutineRunner));
+        StartCoroutine(PunchRoutine(target, strength, duration));
+    }
+
+    private void PunchRoutineRunner() { /* marker for StopCoroutine */ }
+
+    private static IEnumerator PunchRoutine(RectTransform rt, float strength, float duration)
+    {
+        if (rt == null) yield break;
+        Vector3 baseScale = rt.localScale;
+        float t = 0f;
+        while (t < duration)
+        {
+            t += Time.unscaledDeltaTime;
+            float u = Mathf.Clamp01(t / duration);
+            // damped sine: peaks then settles
+            float wobble = Mathf.Sin(u * Mathf.PI * 2f) * (1f - u) * strength;
+            rt.localScale = baseScale * (1f + wobble);
+            yield return null;
+        }
+        rt.localScale = baseScale;
     }
 
     private void RefreshMetrics()

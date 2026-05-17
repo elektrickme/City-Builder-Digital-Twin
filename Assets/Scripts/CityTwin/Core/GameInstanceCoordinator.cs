@@ -356,9 +356,12 @@ namespace CityTwin.Core
             float spacing = stopsConfig?.spacing ?? 60f;
             float minNodeDist = stopsConfig?.minDistanceFromNode ?? 30f;
             float minStopDist = stopsConfig?.minDistanceBetweenStops ?? 30f;
+            float jitter = stopsConfig?.spacingJitter ?? 0.25f;
+            float removal = stopsConfig?.removalRate ?? 0.30f;
+            int seed = stopsConfig?.seed ?? 1234;
 
-            Debug.Log($"[Coordinator:Stops] Generating stops — graph has {graph.Nodes.Count} nodes, {graph.Edges.Count} edges. Config: spacing={spacing}, minNodeDist={minNodeDist}, minStopDist={minStopDist}");
-            graph.GenerateStops(spacing, minNodeDist, minStopDist);
+            Debug.Log($"[Coordinator:Stops] Generating stops — graph has {graph.Nodes.Count} nodes, {graph.Edges.Count} edges. Config: spacing={spacing}, minNodeDist={minNodeDist}, minStopDist={minStopDist}, jitter={jitter}, removal={removal}, seed={seed}");
+            graph.GenerateStops(spacing, minNodeDist, minStopDist, jitter, removal, seed);
             Debug.Log($"[Coordinator:Stops] Result: {graph.Stops.Count} stops generated.");
         }
 

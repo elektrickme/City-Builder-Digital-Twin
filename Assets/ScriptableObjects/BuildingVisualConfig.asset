@@ -62,6 +62,6 @@ MonoBehaviour:
     haloColor: {r: 1, g: 0, b: 1, a: 1}
     haloScaleMultiplier: 1
   - buildingId: circus
-    sprite: {fileID: 21300000, guid: 677e6c1ab99b54ed483f1239a4d5ac17, type: 3}
+    sprite: {fileID: 54264382983760869, guid: ab5cacb87326240e48582303f5ba5e8f, type: 3}
     haloColor: {r: 1, g: 0, b: 1, a: 1}
     haloScaleMultiplier: 1.4

@@ -65,11 +65,18 @@ namespace CityTwin.Simulation
         /// <summary>
         /// Generate transit stops along edges at regular intervals.
         /// Matches HTML logic: evenly spaced along each edge, rejected if too close to a node or another stop.
+        /// Optional spacingJitter (0..1) randomizes per-stop offset along segment; removalRate (0..1) drops
+        /// random stops to mimic real-world sparsity. Pass a non-negative seed for reproducible layouts.
         /// </summary>
-        public void GenerateStops(float spacing = 60f, float minDistFromNode = 30f, float minDistBetweenStops = 30f)
+        public void GenerateStops(float spacing = 60f, float minDistFromNode = 30f, float minDistBetweenStops = 30f,
+                                  float spacingJitter = 0f, float removalRate = 0f, int seed = -1)
         {
             _stops.Clear();
             if (_edges.Count == 0 || _nodes.Count < 2) return;
+
+            spacingJitter = Mathf.Clamp01(spacingJitter);
+            removalRate = Mathf.Clamp01(removalRate);
+            var rng = seed >= 0 ? new System.Random(seed) : new System.Random();
 
             // Deduplicate edges (A->B and B->A are the same road segment)
             var processed = new HashSet<long>();
@@ -88,8 +95,17 @@ namespace CityTwin.Simulation
                 int count = Mathf.FloorToInt(segLen / spacing);
                 for (int j = 1; j <= count; j++)
                 {
-                    float t = (float)j / (count + 1);
+                    float baseT = (float)j / (count + 1);
+                    // Jitter the slot's t-parameter inside its own half-slot so stops never swap order.
+                    float slotHalf = 0.5f / (count + 1);
+                    float jitterT = spacingJitter > 0f
+                        ? ((float)rng.NextDouble() * 2f - 1f) * slotHalf * spacingJitter
+                        : 0f;
+                    float t = Mathf.Clamp01(baseT + jitterT);
                     Vector2 pos = Vector2.Lerp(a, b, t);
+
+                    // Random removal — mimics real-world stop sparsity, seeded for reproducibility.
+                    if (removalRate > 0f && rng.NextDouble() < removalRate) continue;
 
                     // Reject if too close to any node
                     bool tooCloseToNode = false;
@@ -124,7 +140,7 @@ namespace CityTwin.Simulation
                 }
             }
 
-            Debug.Log($"[TransitGraph] Generated {_stops.Count} transit stops (spacing={spacing}, minNodeDist={minDistFromNode}, minStopDist={minDistBetweenStops})");
+            Debug.Log($"[TransitGraph] Generated {_stops.Count} transit stops (spacing={spacing}, jitter={spacingJitter:F2}, removal={removalRate:F2}, seed={seed}, minNodeDist={minDistFromNode}, minStopDist={minDistBetweenStops})");
         }
 
         /// <summary>Shortest path from startId to all nodes. Returns distances (key = node id, value = distance). Use float.MaxValue for unreachable.</summary>

@@ -143,6 +143,25 @@ namespace CityTwin.Simulation
 
         public TransitGraph TransitGraph => _transitGraph;
 
+        /// <summary>Resolved scoring hub positions in content-local space.
+        /// Uses explicit scoring hubs when set, otherwise falls back to transit graph nodes.</summary>
+        public IReadOnlyList<Vector2> HubPositions
+        {
+            get
+            {
+                if (_scoringHubs != null && _scoringHubs.Count > 0)
+                {
+                    var positions = new Vector2[_scoringHubs.Count];
+                    for (int i = 0; i < _scoringHubs.Count; i++) positions[i] = _scoringHubs[i].position;
+                    return positions;
+                }
+                var nodes = _transitGraph.Nodes;
+                var arr = new Vector2[nodes.Count];
+                for (int i = 0; i < nodes.Count; i++) arr[i] = nodes[i].Position;
+                return arr;
+            }
+        }
+
         /// <summary>Optional delegate that returns the visual halo radius for a building id.
         /// When set, connection range uses halo radius instead of _roadConnectRange.</summary>
         public Func<string, float> HaloRadiusResolver { get; set; }
