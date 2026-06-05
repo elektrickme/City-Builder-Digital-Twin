@@ -12,7 +12,9 @@ namespace CityTwin.Core
     public class GameInstanceCoordinator : MonoBehaviour
     {
         [SerializeField] private SimulationEngine simulationEngine;
-        [SerializeField] private TileTrackingManager tileTracking;
+        // Resolved via GetComponent in Awake (interface, not Inspector-serializable).
+        // TUIO is the default ITileSource; replay/mock/live sources can substitute without touching this class.
+        private ITileSource tileTracking;
         [SerializeField] private GameConfigLoader configLoader;
         [SerializeField] private SessionTimer sessionTimer;
         [SerializeField] private BuildingSpawner buildingSpawner;
@@ -49,7 +51,7 @@ namespace CityTwin.Core
                 gameInstanceRoot.ApplyOscConfig(configLoader.Config);
 
             if (simulationEngine == null) simulationEngine = GetComponentInChildren<SimulationEngine>(true);
-            if (tileTracking == null) tileTracking = GetComponent<TileTrackingManager>();
+            if (tileTracking == null) tileTracking = GetComponent<ITileSource>();
             if (sessionTimer == null) sessionTimer = GetComponentInChildren<SessionTimer>(true);
             if (hubLayoutManager == null) hubLayoutManager = GetComponentInChildren<HubLayoutManager>(true);
         }

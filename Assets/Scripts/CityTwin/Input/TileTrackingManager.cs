@@ -9,7 +9,7 @@ namespace CityTwin.Input
 {
     /// <summary>Per-instance OSC tile tracking. One receiver per instance; port from GameInstanceRoot. No statics.</summary>
     [RequireComponent(typeof(OSCReceiver))]
-    public class TileTrackingManager : MonoBehaviour
+    public class TileTrackingManager : MonoBehaviour, ITileSource
     {
         [Tooltip("Optional: map TUIO classId to building id. Empty = use classId as string.")]
         [SerializeField] private List<ClassIdToBuilding> classIdToBuilding = new List<ClassIdToBuilding>();
@@ -23,6 +23,13 @@ namespace CityTwin.Input
         [Tooltip("Building id to use when Use Local Testing Fallback is on and classId has no mapping (e.g. garden, park).")]
         [SerializeField] private string localTestingBuildingId = "garden";
 
+        [Header("Smoothing (EMA)")]
+        [Tooltip("Smooth incoming TUIO positions with an exponential moving average to reduce jitter. Disable to use raw positions.")]
+        [SerializeField] private bool smoothPosition = true;
+        [Tooltip("EMA weight for the newest sample (0-1). Lower = smoother but more lag; higher = more responsive but more jitter.")]
+        [Range(0.01f, 1f)]
+        [SerializeField] private float positionSmoothingAlpha = 0.3f;
+
         public event Action<TilePose> OnTileUpdated;
         public event Action<string> OnTileRemoved;
 
@@ -30,6 +37,7 @@ namespace CityTwin.Input
         [SerializeField] private OSCReceiver _receiver;
         private IOSCBind _bind;
         private readonly Dictionary<int, string> _sessionToTileId = new Dictionary<int, string>();
+        private readonly Dictionary<int, Vector2> _sessionToSmoothedPos = new Dictionary<int, Vector2>();
         private HashSet<int> _lastAlive = new HashSet<int>();
         private int _nextLocalId;
 
@@ -79,22 +87,31 @@ namespace CityTwin.Input
 
         private void HandleSet(OSCMessage msg)
         {
-            if (msg.Values.Count < 6) return;
             int sessionId = msg.Values[1].IntValue;
             int classId = msg.Values[2].IntValue;
             float x = msg.Values[3].FloatValue;
             float y = msg.Values[4].FloatValue;
-            float angle = msg.Values[5].FloatValue;
 
             string buildingId = ResolveBuildingId(classId);
             if (!_sessionToTileId.TryGetValue(sessionId, out string tileId))
             {
                 tileId = $"osc_{_instanceRoot?.InstanceId ?? 0}_{_nextLocalId++}";
                 _sessionToTileId[sessionId] = tileId;
+                Debug.LogError($"[TileTracking] Placing building type '{buildingId}' (classId={classId}) → sessionId={sessionId} tileId={tileId}");
+            }
+
+            Vector2 rawPos = new Vector2(x, y);
+            Vector2 pos = rawPos;
+            if (smoothPosition)
+            {
+                // EMA: smoothed = prev + alpha * (raw - prev). First sample seeds with the raw value.
+                if (_sessionToSmoothedPos.TryGetValue(sessionId, out Vector2 prev))
+                    pos = prev + positionSmoothingAlpha * (rawPos - prev);
+                _sessionToSmoothedPos[sessionId] = pos;
             }
 
             int sourceId = _instanceRoot != null ? _instanceRoot.InstanceId : 0;
-            var pose = new TilePose(new Vector2(x, y), angle, buildingId, sourceId, tileId);
+            var pose = new TilePose(pos, 0f, buildingId, sourceId, tileId);
             //Debug.Log($"[TileTracking] TUIO set → buildingId={buildingId} pos=({x:F2},{y:F2}) tileId={tileId} (classId={classId})");
             OnTileUpdated?.Invoke(pose);
         }
@@ -112,6 +129,7 @@ namespace CityTwin.Input
                 if (!alive.Contains(sessionId) && _sessionToTileId.TryGetValue(sessionId, out string tileId))
                 {
                     _sessionToTileId.Remove(sessionId);
+                    _sessionToSmoothedPos.Remove(sessionId);
                     OnTileRemoved?.Invoke(tileId);
                 }
             }
@@ -123,6 +141,7 @@ namespace CityTwin.Input
         public void ClearSessions()
         {
             _sessionToTileId.Clear();
+            _sessionToSmoothedPos.Clear();
             _lastAlive.Clear();
         }
 

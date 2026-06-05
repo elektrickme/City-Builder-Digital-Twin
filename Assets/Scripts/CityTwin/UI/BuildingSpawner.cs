@@ -26,6 +26,9 @@ namespace CityTwin.UI
         [Tooltip("Enable when Content Root is center-anchored. Maps TUIO (0.5, 0.5) to local (0,0) so center of simulator = center of table.")]
         [SerializeField] private bool centerOrigin = true;
 
+        [Tooltip("Extra offset (in Content Root local units) added to every spawned/moved marker. Use to nudge markers if they sit slightly off from the board center.")]
+        [SerializeField] private Vector2 markerPositionOffset = Vector2.zero;
+
         private readonly Dictionary<string, GameObject> _spawned = new Dictionary<string, GameObject>();
         private readonly Dictionary<string, float> _debugHaloScaleByBuildingId = new Dictionary<string, float>();
 
@@ -113,7 +116,7 @@ namespace CityTwin.UI
 
             Vector2 pos = pose.Position;
             if (flipY) pos.y = 1f - pos.y;
-            Vector2 localPos = TuioToLocal(pos);
+            Vector2 localPos = TuioToLocal(pos) + markerPositionOffset;
 
             if (instance.transform is RectTransform rt)
             {
@@ -146,7 +149,7 @@ namespace CityTwin.UI
 
             Vector2 pos = pose.Position;
             if (flipY) pos.y = 1f - pos.y;
-            Vector2 localPos = TuioToLocal(pos);
+            Vector2 localPos = TuioToLocal(pos) + markerPositionOffset;
 
             if (go.transform is RectTransform rt)
             {
@@ -204,7 +207,11 @@ namespace CityTwin.UI
             var display = buildingMarkerPrefab.GetComponentInChildren<BuildingMarkerDisplay>(true);
             if (display == null) return false;
 
-            radius = display.GetVisualRadiusForBuilding(buildingId) * GetDebugHaloScale(buildingId);
+            // GetVisualRadiusForBuilding is rect/halo-field based and ignores the prefab root's
+            // transform scale, but the halo renders through it — fold it back in so the connection
+            // reach matches the visible halo when the prefab is scaled.
+            float prefabScale = buildingMarkerPrefab.transform.localScale.x;
+            radius = display.GetVisualRadiusForBuilding(buildingId) * GetDebugHaloScale(buildingId) * prefabScale;
             return radius > 0.001f;
         }
 

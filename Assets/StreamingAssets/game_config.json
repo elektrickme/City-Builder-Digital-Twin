@@ -16,8 +16,8 @@
     "norm": 150,
     "equalDistrictWeight": 100000,
     "influenceRefBase": 10,
-    "influenceReferenceMeters": 15,
-    "distanceExponent": 1,
+    "influenceReferenceMeters": 6,
+    "distanceExponent": 2.5,
     "distanceFloor": 50,
     "distanceScale": 100,
     "maxRoadDistance": 150,
@@ -55,10 +55,10 @@
   "osc": {
     
     "sources": [
-      { "id": "Q1", "listenPort": 3333, "expectedSenderIp": "127.0.0.1" },
-      { "id": "Q2", "listenPort": 9002, "expectedSenderIp": "192.168.0.102" },
-      { "id": "Q3", "listenPort": 9003, "expectedSenderIp": "192.168.0.103" },
-      { "id": "Q4", "listenPort": 9004, "expectedSenderIp": "192.168.0.104" }
+      { "id": "Q1", "listenPort": 3332, "expectedSenderIp": "192.168.50.1" },
+      { "id": "Q2", "listenPort": 3333, "expectedSenderIp": "192.168.50.1" },
+      { "id": "Q3", "listenPort": 3334, "expectedSenderIp": "192.168.50.1" },
+      { "id": "Q4", "listenPort": 3335, "expectedSenderIp": "192.168.50.1" }
     ]
   },
   "buildings": [

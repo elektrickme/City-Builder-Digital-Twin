@@ -255,7 +255,7 @@ namespace CityTwin.Simulation
             var stopConns = inactive ? new List<TransitGraph.StopConnectionPoint>()
                                      : _transitGraph.GetStopConnections(pose.Position, connRange);
 
-            bool nearHub = !inactive && IsNearAnyHub(pose.Position, connRange);
+            bool nearHub = !inactive && IsNearAnyHub(pose.Position, connRange + _hubConnectionRangeBonus);
             bool connected = roadConns.Count > 0 || stopConns.Count > 0 || nearHub;
 
             Debug.Log($"[SimEngine:AddTile] {tileId} building={pose.BuildingId} pos=({pose.Position.x:F1},{pose.Position.y:F1}) " +
@@ -294,7 +294,7 @@ namespace CityTwin.Simulation
             t.StopConnections = t.Inactive
                 ? new List<TransitGraph.StopConnectionPoint>()
                 : _transitGraph.GetStopConnections(position, connRange);
-            bool nearHub = !t.Inactive && IsNearAnyHub(position, connRange);
+            bool nearHub = !t.Inactive && IsNearAnyHub(position, connRange + _hubConnectionRangeBonus);
             t.Connected = t.RoadConnections.Count > 0 || t.StopConnections.Count > 0 || nearHub;
             _placedTiles[idx] = t;
             RecalculateMetrics();
@@ -478,8 +478,8 @@ namespace CityTwin.Simulation
                     float pathUnits = float.MaxValue;
                     int transportEdgeHops = 0;
 
-                    // 1. Direct path: building halo overlaps hub
-                    if (directDist <= connRange)
+                    // 1. Direct path: building halo overlaps hub (+ hub-only bonus catchment)
+                    if (directDist <= connRange + _hubConnectionRangeBonus)
                     {
                         pathUnits = directDist;
                         transportEdgeHops = 0;
@@ -685,6 +685,11 @@ namespace CityTwin.Simulation
         [SerializeField] private float _connectionRangeOffset = 0f;
 
         public float ConnectionRangeOffset { get => _connectionRangeOffset; set => _connectionRangeOffset = value; }
+
+        [Tooltip("Extra range added ONLY for the direct building→hub check. Does not affect road or stop snap. Use this to make hubs feel like they have their own catchment.")]
+        [SerializeField] private float _hubConnectionRangeBonus = 0f;
+
+        public float HubConnectionRangeBonus { get => _hubConnectionRangeBonus; set => _hubConnectionRangeBonus = value; }
 
         private float GetConnectionRange(string buildingId)
         {

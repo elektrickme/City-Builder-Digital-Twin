@@ -428,10 +428,11 @@ namespace CityTwin.UI
         {
             if (marker == null || !stopPulse) return;
             marker.DOKill(false);
-            marker.localScale = Vector3.one;
+            Vector3 baseScale = stopMarkerPrefab != null ? stopMarkerPrefab.transform.localScale : Vector3.one;
+            marker.localScale = baseScale;
             float peak = Mathf.Clamp(stopPulseScale, 1.002f, 2f);
             float dur = Mathf.Max(0.05f, stopPulseDuration);
-            marker.DOScale(peak, dur)
+            marker.DOScale(baseScale * peak, dur)
                 .SetEase(Ease.InOutSine)
                 .SetLoops(-1, LoopType.Yoyo)
                 .SetTarget(marker);
@@ -445,11 +446,11 @@ namespace CityTwin.UI
                 ResetStopMarkerTween(_stopMarkerPool[i]);
         }
 
-        private static void ResetStopMarkerTween(RectTransform rt)
+        private void ResetStopMarkerTween(RectTransform rt)
         {
             if (rt == null) return;
             rt.DOKill(false);
-            rt.localScale = Vector3.one;
+            rt.localScale = stopMarkerPrefab != null ? stopMarkerPrefab.transform.localScale : Vector3.one;
         }
 
         private RectTransform AcquireStopMarker(RectTransform parent)

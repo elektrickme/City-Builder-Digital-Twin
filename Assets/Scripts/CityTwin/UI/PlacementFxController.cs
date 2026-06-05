@@ -29,7 +29,7 @@ namespace CityTwin.UI
         [SerializeField, Range(0f, 1f)] private float rippleStartAlpha = 0.55f;
         [SerializeField] private Color rippleEnvColor = new Color(0.30f, 0.85f, 0.45f, 1f);
         [SerializeField] private Color rippleEcoColor = new Color(1f, 0.78f, 0.20f, 1f);
-        [SerializeField] private Color rippleSafColor = new Color(1f, 0.32f, 0.32f, 1f);
+        [SerializeField] private Color rippleSafColor = new Color(0.20f, 0.55f, 1f, 1f);
         [SerializeField] private Color rippleCulColor = new Color(0.62f, 0.45f, 1f, 1f);
         [SerializeField] private Color rippleDefaultColor = new Color(0.35f, 0.80f, 1f, 1f);
 

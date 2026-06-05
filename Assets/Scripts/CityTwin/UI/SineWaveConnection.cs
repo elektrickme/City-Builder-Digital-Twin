@@ -4,11 +4,8 @@ using UnityEngine.UI;
 namespace CityTwin.UI
 {
     /// <summary>
-    /// IConnectionVisual that draws a sine-wave ribbon instead of a straight line.
-    /// - On (re)activation it plays a one-shot "spawn" burst: the wave draws on from the
-    ///   building toward its connection and the amplitude over-shoots then settles.
-    /// - After settling it keeps a small constant travelling wave.
-    /// - Wave humps + amplitude scale with the building→connection distance.
+    /// IConnectionVisual that draws a static sine-wave ribbon instead of a straight line.
+    /// Wave humps + amplitude scale with the building→connection distance.
     ///
     /// Drop on a prefab (RectTransform + CanvasRenderer auto-added by Graphic) and assign that
     /// prefab as HubConnectionRenderer.connectionPrefab. HubConnectionRenderer styles it through
@@ -32,22 +29,8 @@ namespace CityTwin.UI
         [Tooltip("Mesh segments per 100 px of length (clamped).")]
         [SerializeField] private float segmentsPer100Px = 28f;
 
-        [Header("Constant travel")]
-        [Tooltip("Phase speed of the settled wave (radians/sec). Negative = travels toward building.")]
-        [SerializeField] private float travelSpeed = 3.2f;
-
-        [Header("Spawn burst")]
-        [Tooltip("Seconds for the wave to draw on from building to connection.")]
-        [SerializeField] private float drawOnDuration = 0.40f;
-        [Tooltip("Seconds for the amplitude over-shoot to settle.")]
-        [SerializeField] private float settleDuration = 0.55f;
-        [Tooltip("Peak amplitude multiplier at spawn (1 = no burst).")]
-        [SerializeField] private float burstAmplitudeMul = 2.4f;
-
         private RectTransform _rt;
         private float _length;
-        private float _phase;
-        private float _spawnTime = -999f;
 
         protected override void Awake()
         {
@@ -62,8 +45,6 @@ namespace CityTwin.UI
         protected override void OnEnable()
         {
             base.OnEnable();
-            // (Re)activation = a fresh connection: replay the spawn burst.
-            _spawnTime = Time.unscaledTime;
             SetVerticesDirty();
         }
 
@@ -89,15 +70,6 @@ namespace CityTwin.UI
                 gameObject.SetActive(active);
         }
 
-        // ---- animation ----
-
-        private void Update()
-        {
-            // Constant gentle travel + keep redrawing during the spawn window.
-            _phase += travelSpeed * Time.unscaledDeltaTime;
-            SetVerticesDirty();
-        }
-
         protected override void OnPopulateMesh(VertexHelper vh)
         {
             vh.Clear();
@@ -105,15 +77,8 @@ namespace CityTwin.UI
 
             float half = Mathf.Max(0.25f, strokeWidth * 0.5f);
 
-            // Spawn envelope
-            float t = Time.unscaledTime - _spawnTime;
-            float reveal = drawOnDuration <= 0f ? 1f : Mathf.Clamp01(t / drawOnDuration);
-            reveal = 1f - Mathf.Pow(1f - reveal, 3f); // ease-out
-            float settle01 = settleDuration <= 0f ? 1f : Mathf.Clamp01(t / settleDuration);
-            float burst = Mathf.Lerp(burstAmplitudeMul, 1f, settle01 * settle01);
-
-            float amp = Mathf.Clamp(baseAmplitude + _length * amplitudePerPx, minAmplitude, maxAmplitude) * burst;
-            float drawnLen = _length * reveal;
+            float amp = Mathf.Clamp(baseAmplitude + _length * amplitudePerPx, minAmplitude, maxAmplitude);
+            float drawnLen = _length;
             float k = 2f * Mathf.PI / Mathf.Max(4f, wavelength); // angular wavenumber
 
             int segs = Mathf.Clamp(Mathf.RoundToInt(drawnLen / 100f * segmentsPer100Px), 8, 96);
@@ -125,7 +90,7 @@ namespace CityTwin.UI
                 float x = u * drawnLen;
                 // taper amplitude to 0 at both ends so it visually "plugs into" building + target
                 float endTaper = Mathf.Sin(Mathf.Clamp01(u) * Mathf.PI);
-                float y = Mathf.Sin(x * k - _phase) * amp * endTaper;
+                float y = Mathf.Sin(x * k) * amp * endTaper;
 
                 vh.AddVert(new Vector3(x, y + half, 0f), c, Vector2.zero);
                 vh.AddVert(new Vector3(x, y - half, 0f), c, Vector2.zero);
