@@ -7,6 +7,8 @@ namespace CityTwin.UI
     /// <summary>Spawns a building marker visual when a tile is added and removes it when the tile is removed. Place on Game Instance; assign content root and marker prefab.</summary>
     public class BuildingSpawner : MonoBehaviour
     {
+        [SerializeField] private bool testingLocally = false;
+        
         [Tooltip("Root to parent spawned markers (e.g. a RectTransform for the table area).")]
         [SerializeField] private RectTransform contentRoot;
 
@@ -41,7 +43,7 @@ namespace CityTwin.UI
 
         private void Awake()
         {
-            if (contentRoot == null) contentRoot = GetComponentInChildren<RectTransform>(true);
+            if (contentRoot == null || testingLocally) contentRoot = GetComponentInChildren<RectTransform>(true);
         }
 
         /// <summary>Convert raw TUIO (0-1) position to content root local space, applying flipY and centerOrigin.</summary>
