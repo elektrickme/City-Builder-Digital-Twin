@@ -48,8 +48,8 @@
         "sources": [
             {
                 "id": "Q1",
-                "listenPort": 3333,
-                "expectedSenderIp": "127.0.0.1"
+                "listenPort": 3332,
+                "expectedSenderIp": "192.168.50.1"
             },
             {
                 "id": "Q2",

@@ -47,7 +47,6 @@ namespace CityTwin.Core
             }
 
             ActivePreset = presets[index];
-            Debug.Log($"[HubLayoutManager] Selected preset '{ActivePreset.gameObject.name}' ({index + 1}/{presets.Count})");
 
             ApplyRandomBackground();
         }

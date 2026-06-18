@@ -70,7 +70,6 @@ namespace CityTwin.Core
                 host = source.expectedSenderIp;
 
             SetPortAndHost(listenPort, host);
-            Debug.Log($"[GameInstanceRoot] Instance {instanceId} ({source.id}): port={listenPort}, host={host}");
         }
 
         private void SetPortAndHost(int _port, string _host)
@@ -79,7 +78,6 @@ namespace CityTwin.Core
             {
                 oscReceiver.LocalPort = _port;
                 oscReceiver.LocalHost = _host;
-                Debug.Log($"[GameInstanceRoot] OSC receiver set → port={_port}, host={_host}");
             }
         }
     }

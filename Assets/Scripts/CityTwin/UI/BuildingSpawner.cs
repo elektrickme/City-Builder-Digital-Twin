@@ -112,11 +112,10 @@ namespace CityTwin.UI
         /// <summary>Spawn a building marker at the tile pose. Call after simulation AddTile.</summary>
         public void SpawnBuilding(TilePose pose, string engineTileId)
         {
-            Debug.Log($"[BuildingSpawner] SpawnBuilding buildingId={pose.BuildingId} engineTileId={engineTileId}");
             if (buildingMarkerPrefab == null) { Debug.LogWarning("[BuildingSpawner] buildingMarkerPrefab is not assigned. Assign in Inspector."); return; }
             if (contentRoot == null) { Debug.LogWarning("[BuildingSpawner] contentRoot is not assigned. Assign a RectTransform (e.g. table area)."); return; }
             if (string.IsNullOrEmpty(engineTileId)) { Debug.LogWarning("[BuildingSpawner] engineTileId is empty."); return; }
-            if (_spawned.ContainsKey(engineTileId)) { Debug.Log($"[BuildingSpawner] Already spawned for {engineTileId}, skipping."); return; }
+            if (_spawned.ContainsKey(engineTileId)) return;
 
             GameObject instance = Instantiate(buildingMarkerPrefab, contentRoot);
             instance.name = $"{pose.BuildingId}_{engineTileId}";
@@ -144,7 +143,6 @@ namespace CityTwin.UI
             }
 
             _spawned[engineTileId] = instance;
-            Debug.Log($"[BuildingSpawner] Spawned {pose.BuildingId} at ({localPos.x:F0},{localPos.y:F0})");
             OnTileSpawned?.Invoke(engineTileId, pose.BuildingId, instance);
         }
 

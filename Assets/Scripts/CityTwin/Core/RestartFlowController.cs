@@ -86,7 +86,6 @@ namespace CityTwin.Core
             if (_state == FlowState.CountingDown && tileCount > 0)
             {
                 // Player placed a tile during the countdown — reset to waiting.
-                Debug.Log("[RestartFlow] Tile placed during countdown, resetting to waiting state");
                 if (_countdownRoutine != null)
                 {
                     StopCoroutine(_countdownRoutine);
@@ -130,7 +129,6 @@ namespace CityTwin.Core
 
             _countdownRoutine = null;
             _state = FlowState.Idle;
-            Debug.Log("[RestartFlow] Countdown finished — restarting game");
             coordinator?.RestartGame();
         }
 

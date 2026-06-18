@@ -168,9 +168,6 @@ namespace CityTwin.Simulation
 
         public event Action OnMetricsChanged;
 
-        [Tooltip("Log current metrics to console whenever they are recalculated (e.g. when no UI yet).")]
-        [SerializeField] private bool logMetricsWhenChanged = true;
-
         public void SetBuildingCatalog(List<BuildingDefinition> catalog)
         {
             _buildingCatalog = catalog ?? new List<BuildingDefinition>();
@@ -295,10 +292,6 @@ namespace CityTwin.Simulation
 
             bool nearHub = !inactive && IsNearAnyHub(pose.Position, connRange + _hubConnectionRangeBonus);
             bool connected = roadConns.Count > 0 || stopConns.Count > 0 || nearHub;
-
-            Debug.Log($"[SimEngine:AddTile] {tileId} building={pose.BuildingId} pos=({pose.Position.x:F1},{pose.Position.y:F1}) " +
-                      $"onObstacle={inactive} roadConns={roadConns.Count} stopConns={stopConns.Count} nearHub={nearHub} connected={connected} " +
-                      $"connRange={connRange:F0} graphNodes={_transitGraph.Nodes.Count} graphEdges={_transitGraph.Edges.Count} stops={_transitGraph.Stops.Count}");
 
             _placedTiles.Add(new PlacedTile
             {
@@ -428,8 +421,6 @@ namespace CityTwin.Simulation
                     _activeHubDirectConnections.Clear();
                     _tileStates.Clear();
                     _hubMetrics.Clear();
-                    if (logMetricsWhenChanged)
-                        Debug.Log("[Metrics] QOL=0 (no hubs/graph) | tiles=" + _placedTiles.Count);
                     OnMetricsChanged?.Invoke();
                     return;
                 }
@@ -672,14 +663,6 @@ namespace CityTwin.Simulation
             }
             meanQol /= n;
             _qol = Mathf.Clamp(Mathf.Round(meanQol - _qolBalancePenalty * (maxQol - minQol)), 0f, _qolCap);
-
-            if (logMetricsWhenChanged)
-            {
-                Debug.Log($"[Metrics] QOL={_qol:F0} (cap={_qolCap}) | Env={_environment:F0} Eco={_economy:F0} Safe={_healthSafety:F0} Cul={_cultureEdu:F0} | " +
-                          $"tiles={_placedTiles.Count} conns={_activeConnections.Count} stopConns={_activeStopConnections.Count} | " +
-                          $"meanHubQol={meanQol:F1} maxHub={maxQol:F1} minHub={minQol:F1} penalty={_qolBalancePenalty * (maxQol - minQol):F1} | " +
-                          $"coordScale={coordScale:F2} hubs={hubCount} edges={_transitGraph.Edges.Count} stops={stops.Count}");
-            }
 
             OnMetricsChanged?.Invoke();
         }

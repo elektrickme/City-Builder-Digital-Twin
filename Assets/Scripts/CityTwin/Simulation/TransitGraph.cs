@@ -139,8 +139,6 @@ namespace CityTwin.Simulation
                     });
                 }
             }
-
-            Debug.Log($"[TransitGraph] Generated {_stops.Count} transit stops (spacing={spacing}, jitter={spacingJitter:F2}, removal={removalRate:F2}, seed={seed}, minNodeDist={minDistFromNode}, minStopDist={minDistBetweenStops})");
         }
 
         /// <summary>Shortest path from startId to all nodes. Returns distances (key = node id, value = distance). Use float.MaxValue for unreachable.</summary>

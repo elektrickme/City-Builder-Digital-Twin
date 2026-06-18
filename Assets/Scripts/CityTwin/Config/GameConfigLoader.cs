@@ -315,7 +315,6 @@ namespace CityTwin.Config
                 if (File.Exists(path))
                     File.Copy(path, path + ".bak", true);
                 File.WriteAllText(path, json);
-                Debug.Log($"[GameConfigLoader] Saved config to {path}");
                 return true;
             }
             catch (Exception e)

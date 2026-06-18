@@ -68,11 +68,6 @@ namespace CityTwin.UI
                                                ?? FindFirstObjectByType<DashboardController>();
             if (contentRoot == null && buildingSpawner != null) contentRoot = buildingSpawner.ContentRoot;
 
-            Debug.Log($"[PlacementFxController] Awake on '{name}'. " +
-                      $"spawner={(buildingSpawner != null ? buildingSpawner.name : "NULL")} " +
-                      $"engine={(simulationEngine != null ? simulationEngine.name : "NULL")} " +
-                      $"dashboard={(dashboard != null ? dashboard.name : "NULL")} " +
-                      $"contentRoot={(contentRoot != null ? contentRoot.name : "NULL")}");
             if (buildingSpawner == null || simulationEngine == null || contentRoot == null)
                 Debug.LogError("[PlacementFxController] Missing required refs — FX will not run. " +
                                "Put this component on the Game Instance root (same object as SimulationEngine) " +
@@ -86,8 +81,6 @@ namespace CityTwin.UI
             // Seed both buffers with the current state so the first placement diffs against a real baseline.
             CaptureCurrentInto(ref _previousFrame);
             CaptureCurrentInto(ref _currentFrame);
-            Debug.Log($"[PlacementFxController] OnEnable — subscribed: " +
-                      $"OnTileSpawned={(buildingSpawner != null)} OnMetricsChanged={(simulationEngine != null)}");
         }
 
         private void OnDisable()
@@ -108,7 +101,6 @@ namespace CityTwin.UI
             Vector2 anchored = ResolveMarkerAnchored(marker);
             float radius = ResolveRippleRadius(buildingId);
             Color color = ResolveCategoryColor(buildingId);
-            Debug.Log($"[PlacementFxController] Tile spawned id={buildingId} → ripple at ({anchored.x:F0},{anchored.y:F0}) r={radius:F0}");
             SpawnRipple(anchored, radius, color);
 
             // Coordinator order is AddTile → OnMetricsChanged → SpawnBuilding → OnTileSpawned.

@@ -95,56 +95,11 @@ namespace CityTwin.Core
 
         private void LogStartupDiagnostics()
         {
-            Debug.Log($"[Coordinator:Startup] simulationEngine={simulationEngine != null} buildingSpawner={buildingSpawner != null} " +
-                      $"tileTracking={tileTracking != null} configLoader={configLoader != null} hubRegistry={hubRegistry != null} " +
-                      $"overlapValidator={placementOverlapValidator != null} connectionRenderer={hubConnectionRenderer != null}");
-            Debug.Log($"[Coordinator:Startup] Budget={Budget}");
-
-            if (buildingSpawner != null && buildingSpawner.ContentRoot != null)
-            {
-                var cr = buildingSpawner.ContentRoot;
-                Debug.Log($"[Coordinator:Startup] ContentRoot rect=({cr.rect.width:F0}x{cr.rect.height:F0}) pivot=({cr.pivot.x:F2},{cr.pivot.y:F2})");
-            }
-            else
-                Debug.LogWarning("[Coordinator:Startup] ContentRoot is NULL — TUIO mapping will fail!");
-
-            if (simulationEngine != null)
-            {
-                var graph = simulationEngine.TransitGraph;
-                Debug.Log($"[Coordinator:Startup] TransitGraph nodes={graph.Nodes.Count} edges={graph.Edges.Count}");
-                for (int i = 0; i < graph.Nodes.Count; i++)
-                {
-                    var n = graph.Nodes[i];
-                    Debug.Log($"[Coordinator:Startup]   Node[{i}] pos=({n.Position.x:F1},{n.Position.y:F1}) pop={n.Population:F0}");
-                }
-                for (int i = 0; i < graph.Edges.Count; i++)
-                {
-                    var e = graph.Edges[i];
-                    Debug.Log($"[Coordinator:Startup]   Edge[{i}] {e.FromId}->{e.ToId} len={e.Length:F1}");
-                }
-            }
-
-            if (hubRegistry != null && hubRegistry.IsValid)
-            {
-                var hubs = hubRegistry.Hubs;
-                for (int i = 0; i < hubs.Count; i++)
-                {
-                    var h = hubs[i];
-                    Vector2 contentPos = buildingSpawner != null
-                        ? buildingSpawner.WorldToContentLocal(h.transform.position)
-                        : h.Position2D;
-                    Debug.Log($"[Coordinator:Startup]   Hub[{i}] worldPos={h.transform.position} contentLocal=({contentPos.x:F1},{contentPos.y:F1}) pop={h.Population:F0}");
-                }
-            }
-            else
-                Debug.LogWarning("[Coordinator:Startup] HubRegistry is null or invalid — no scoring hubs!");
-
-            if (configLoader?.Config?.Buildings != null)
-            {
-                Debug.Log($"[Coordinator:Startup] BuildingCatalog has {configLoader.Config.Buildings.Length} entries: " +
-                          string.Join(", ", System.Array.ConvertAll(configLoader.Config.Buildings, b => b.Id)));
-            }
-            else
+            if (buildingSpawner == null || buildingSpawner.ContentRoot == null)
+                Debug.LogWarning("[Coordinator:Startup] ContentRoot is NULL - TUIO mapping will fail!");
+            if (hubRegistry == null || !hubRegistry.IsValid)
+                Debug.LogWarning("[Coordinator:Startup] HubRegistry is null or invalid - no scoring hubs!");
+            if (configLoader?.Config?.Buildings == null)
                 Debug.LogWarning("[Coordinator:Startup] No building catalog loaded!");
         }
 
@@ -245,8 +200,6 @@ namespace CityTwin.Core
         /// </summary>
         public void RestartGame()
         {
-            Debug.Log($"[Coordinator] RestartGame requested for instance {gameInstanceRoot?.InstanceId ?? -1}");
-
             buildingSpawner?.ClearAll();
             simulationEngine?.ClearAllTiles();
             placementOverlapValidator?.ClearAllTiles();
@@ -267,8 +220,6 @@ namespace CityTwin.Core
             sessionTimer?.Stop();
             endScreen?.Hide();
             startScreen?.ShowStartScreen();
-
-            Debug.Log($"[Coordinator] Restart complete — budget={Budget}, preset={hubLayoutManager?.ActivePreset?.name}");
         }
 
         // ── Debug / playtest setters (used by the secret menu, MouseBuildingTester) ──
@@ -417,7 +368,6 @@ namespace CityTwin.Core
             }
 
             simulationEngine.SetTransitGraph(graph);
-            Debug.Log($"[Coordinator] Rebuilt transit graph (k-nearest k={k}): {hubs.Count} nodes, {edgeCount} directed edges, {edgeSet.Count} unique links");
         }
 
         /// <summary>Generate transit stops along road edges using config values.</summary>
@@ -443,9 +393,7 @@ namespace CityTwin.Core
             float removal = stopsConfig?.removalRate ?? 0.30f;
             int seed = stopsConfig?.seed ?? 1234;
 
-            Debug.Log($"[Coordinator:Stops] Generating stops — graph has {graph.Nodes.Count} nodes, {graph.Edges.Count} edges. Config: spacing={spacing}, minNodeDist={minNodeDist}, minStopDist={minStopDist}, jitter={jitter}, removal={removal}, seed={seed}");
             graph.GenerateStops(spacing, minNodeDist, minStopDist, jitter, removal, seed);
-            Debug.Log($"[Coordinator:Stops] Result: {graph.Stops.Count} stops generated.");
         }
 
         private static int IndexOfHub(IReadOnlyList<ResidentialHubMono> list, ResidentialHubMono hub)
@@ -560,11 +508,8 @@ namespace CityTwin.Core
             bool initialOverlap = placementOverlapValidator != null &&
                 placementOverlapValidator.IsOverlapping(null, simPose.Position, candidateRadius);
 
-            Debug.Log($"[Coordinator:NewTile] building={pose.BuildingId} price={price} budget={Budget} overlap={initialOverlap} candidateRadius={candidateRadius:F1}");
-
             if (initialOverlap)
             {
-                Debug.Log($"[Coordinator:NewTile] BLOCKED — overlapping another building or hub at ({simPos.x:F1},{simPos.y:F1}).");
                 return;
             }
             if (price > 0 && Budget < price)
@@ -600,9 +545,6 @@ namespace CityTwin.Core
             placementOverlapValidator?.SetTileVisualInvalid(engineId, false);
             UpdateMarkerConnectionState(engineId, false);
 
-            bool isConnected = simulationEngine.IsTileConnected(engineId);
-            Debug.Log($"[Coordinator:NewTile] PLACED engineId={engineId} connected={isConnected} budgetLeft={Budget}");
-
             simulationEngine.RecalculateMetrics();
         }
 
@@ -621,7 +563,6 @@ namespace CityTwin.Core
             else
                 state = MarkerConnectionState.Connected;
 
-            //Debug.Log($"[Coordinator:MarkerState] engineId={engineId} inactive={inactive} connected={connected} overlap={overlapInvalid} → {state}");
             buildingSpawner.SetMarkerConnectionState(engineId, state);
         }
 
@@ -644,7 +585,6 @@ namespace CityTwin.Core
                 simulationEngine.RemoveTile(engineId);
                 placementOverlapValidator?.RemoveTile(engineId);
                 RefundBudgetForBuilding(buildingId);
-                //Debug.Log($"[Coordinator] Tile removed oscTileId={oscTileId} engineId={engineId} → refunded; budget now {Budget}");
             }
         }
 

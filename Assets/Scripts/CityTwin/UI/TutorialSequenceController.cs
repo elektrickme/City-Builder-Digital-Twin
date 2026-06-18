@@ -96,7 +96,6 @@ namespace CityTwin.UI
 
             _isRunning = false;
             _sequenceRoutine = null;
-            Debug.Log("[TutorialSequence] Tutorial complete.");
             OnTutorialComplete?.Invoke();
         }
 
