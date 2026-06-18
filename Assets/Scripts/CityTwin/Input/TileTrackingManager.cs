@@ -100,6 +100,12 @@ namespace CityTwin.Input
 
         private void HandleSet(OSCMessage msg)
         {
+            // TUIO 2Dobj "set" = "set", sessionId(int), classId(int), x(float), y(float), [angle...].
+            // Guard against truncated or wrongly-typed packets - this is untrusted network input and
+            // indexing Values[1..4] blindly would throw on a malformed message.
+            if (msg.Values.Count < 5) return;
+            if (msg.Values[1].Type != OSCValueType.Int || msg.Values[2].Type != OSCValueType.Int) return;
+
             int sessionId = msg.Values[1].IntValue;
             int classId = msg.Values[2].IntValue;
             float x = msg.Values[3].FloatValue;

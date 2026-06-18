@@ -42,9 +42,16 @@ public class DashboardController : MonoBehaviour
 
     private float _displayEnv, _displayEco, _displaySaf, _displayCul;
 
+    // Cached last-shown integers so a text field (and its string allocation + TMP rebuild) is only
+    // touched when the displayed value actually changes, instead of every frame.
+    private int _lastQol = int.MinValue, _lastEnv = int.MinValue, _lastEco = int.MinValue, _lastSaf = int.MinValue, _lastCul = int.MinValue;
+    private int _lastBudget = int.MinValue, _lastTimerSeconds = int.MinValue;
+
     private void ResetMetricUI()
     {
         _displayQol = _displayEnv = _displayEco = _displaySaf = _displayCul = 0f;
+        _lastQol = _lastEnv = _lastEco = _lastSaf = _lastCul = 0;
+        _lastBudget = _lastTimerSeconds = int.MinValue;
 
         if (qolText != null) qolText.text = "0";
         if (environmentText != null) environmentText.text = "0%";
@@ -93,9 +100,19 @@ public class DashboardController : MonoBehaviour
     private void Update()
     {
         if (sessionTimer != null && timerText != null)
-            timerText.text = sessionTimer.FormatTime();
-        if (coordinator != null && budgetText != null)
-            budgetText.text = coordinator.Budget.ToString();
+        {
+            int secs = Mathf.Max(0, Mathf.FloorToInt(sessionTimer.RemainingSeconds));
+            if (secs != _lastTimerSeconds)
+            {
+                _lastTimerSeconds = secs;
+                timerText.text = sessionTimer.FormatTime();
+            }
+        }
+        if (coordinator != null && budgetText != null && coordinator.Budget != _lastBudget)
+        {
+            _lastBudget = coordinator.Budget;
+            budgetText.text = _lastBudget.ToString();
+        }
 
         // Drive the metric smoothing every frame so the bars/texts converge to the live values and
         // settle to 0 when the last building is removed. OnMetricsChanged fires only on discrete edits,
@@ -151,15 +168,22 @@ public class DashboardController : MonoBehaviour
         _displayEco = Mathf.Lerp(_displayEco, simulationEngine.Economy, dt);
         _displaySaf = Mathf.Lerp(_displaySaf, simulationEngine.HealthSafety, dt);
         _displayCul = Mathf.Lerp(_displayCul, simulationEngine.CultureEdu, dt);
-        if (qolText != null) qolText.text = Mathf.RoundToInt(_displayQol).ToString();
-        if (environmentText != null) environmentText.text = $"{Mathf.RoundToInt(_displayEnv)}%";
-        if (economyText != null) economyText.text = $"{Mathf.RoundToInt(_displayEco)}%";
-        if (healthSafetyText != null) healthSafetyText.text = $"{Mathf.RoundToInt(_displaySaf)}%";
-        if (cultureEduText != null) cultureEduText.text = $"{Mathf.RoundToInt(_displayCul)}%";
+        SetMetricText(qolText, Mathf.RoundToInt(_displayQol), ref _lastQol, false);
+        SetMetricText(environmentText, Mathf.RoundToInt(_displayEnv), ref _lastEnv, true);
+        SetMetricText(economyText, Mathf.RoundToInt(_displayEco), ref _lastEco, true);
+        SetMetricText(healthSafetyText, Mathf.RoundToInt(_displaySaf), ref _lastSaf, true);
+        SetMetricText(cultureEduText, Mathf.RoundToInt(_displayCul), ref _lastCul, true);
         if (environmentFill != null) environmentFill.fill = Mathf.Clamp01(_displayEnv * metricFillScale);
         if (economyFill != null) economyFill.fill = Mathf.Clamp01(_displayEco * metricFillScale);
         if (healthSafetyFill != null) healthSafetyFill.fill = Mathf.Clamp01(_displaySaf * metricFillScale);
         if (cultureEduFill != null) cultureEduFill.fill = Mathf.Clamp01(_displayCul * metricFillScale);
         if (qolRadialFill != null) qolRadialFill.fill = Mathf.Clamp01(_displayQol / 100f);
+    }
+
+    private static void SetMetricText(TextMeshProUGUI label, int value, ref int last, bool percent)
+    {
+        if (label == null || value == last) return;
+        last = value;
+        label.text = percent ? $"{value}%" : value.ToString();
     }
 }
