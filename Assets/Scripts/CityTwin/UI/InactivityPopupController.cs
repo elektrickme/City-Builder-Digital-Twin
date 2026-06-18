@@ -27,6 +27,9 @@ namespace CityTwin.UI
         private bool _popupVisible;
         private bool _active;
 
+        /// <summary>Live inactivity timeout in seconds. The debug/playtest menu reads and writes this.</summary>
+        public float TimeoutSeconds { get => _timeoutSeconds; set => _timeoutSeconds = Mathf.Max(1f, value); }
+
         private void Awake()
         {
             if (configLoader == null) configLoader = GetComponentInChildren<GameConfigLoader>(true) ?? GetComponentInParent<GameConfigLoader>();

@@ -32,7 +32,12 @@ namespace CityTwin.UI
         [SerializeField] private Vector2 markerPositionOffset = Vector2.zero;
 
         private readonly Dictionary<string, GameObject> _spawned = new Dictionary<string, GameObject>();
-        private readonly Dictionary<string, float> _debugHaloScaleByBuildingId = new Dictionary<string, float>();
+        // Halo multiplier is keyed by building size (Small/Medium/Large), shared across all buildings of that size.
+        private readonly Dictionary<string, float> _debugHaloScaleBySize = new Dictionary<string, float>(System.StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _sizeByBuildingId = new Dictionary<string, string>();
+        public const string HaloSizeSmall = "Small";
+        public const string HaloSizeMedium = "Medium";
+        public const string HaloSizeLarge = "Large";
 
         /// <summary>Fires after a building marker is instantiated (engineTileId, buildingId, marker GameObject).</summary>
         public event System.Action<string, string, GameObject> OnTileSpawned;
@@ -228,24 +233,52 @@ namespace CityTwin.UI
             return radius > 0.001f;
         }
 
+        /// <summary>Halo multiplier for a building, resolved from its size bucket.</summary>
         public float GetDebugHaloScale(string buildingId)
         {
             if (string.IsNullOrEmpty(buildingId)) return DebugHaloMultiplierDefault;
-            return _debugHaloScaleByBuildingId.TryGetValue(buildingId, out float v) ? v : DebugHaloMultiplierDefault;
+            string size = _sizeByBuildingId.TryGetValue(buildingId, out var s) ? s : null;
+            return GetDebugHaloScaleForSize(size);
         }
 
-        public void SetDebugHaloScale(string buildingId, float multiplier)
+        /// <summary>Halo multiplier for a building size ("Small"/"Medium"/"Large").</summary>
+        public float GetDebugHaloScaleForSize(string size)
         {
-            if (string.IsNullOrEmpty(buildingId)) return;
-            multiplier = Mathf.Clamp(multiplier, DebugHaloMultiplierMin, DebugHaloMultiplierMax);
-            _debugHaloScaleByBuildingId[buildingId] = multiplier;
-            ApplyDebugHaloScaleToSpawnedMarkers(buildingId);
+            if (!string.IsNullOrEmpty(size) && _debugHaloScaleBySize.TryGetValue(size, out float v)) return v;
+            return DebugHaloMultiplierDefault;
         }
 
+        /// <summary>Set the halo multiplier for a building size and apply it to every placed marker of that size.</summary>
+        public void SetDebugHaloScaleForSize(string size, float multiplier)
+        {
+            if (string.IsNullOrEmpty(size)) return;
+            _debugHaloScaleBySize[size] = Mathf.Clamp(multiplier, DebugHaloMultiplierMin, DebugHaloMultiplierMax);
+            ApplyDebugHaloScaleToSpawnedMarkers();
+        }
+
+        /// <summary>Build the building-id -> size map from the catalog and seed the per-size halo multipliers
+        /// (from persisted config). Call after the catalog/config is applied.</summary>
+        public void InitDebugHaloScales(IEnumerable<BuildingDefinition> buildings, float small, float medium, float large)
+        {
+            _sizeByBuildingId.Clear();
+            if (buildings != null)
+                foreach (var b in buildings)
+                    if (b != null && !string.IsNullOrEmpty(b.Id))
+                        _sizeByBuildingId[b.Id] = string.IsNullOrEmpty(b.ImpactSize) ? HaloSizeSmall : b.ImpactSize;
+
+            _debugHaloScaleBySize[HaloSizeSmall] = Mathf.Clamp(small > 0f ? small : DebugHaloMultiplierDefault, DebugHaloMultiplierMin, DebugHaloMultiplierMax);
+            _debugHaloScaleBySize[HaloSizeMedium] = Mathf.Clamp(medium > 0f ? medium : DebugHaloMultiplierDefault, DebugHaloMultiplierMin, DebugHaloMultiplierMax);
+            _debugHaloScaleBySize[HaloSizeLarge] = Mathf.Clamp(large > 0f ? large : DebugHaloMultiplierDefault, DebugHaloMultiplierMin, DebugHaloMultiplierMax);
+            ApplyDebugHaloScaleToSpawnedMarkers();
+        }
+
+        /// <summary>Reset all per-size halo multipliers to default and apply to placed markers.</summary>
         public void ClearDebugHaloScales()
         {
-            _debugHaloScaleByBuildingId.Clear();
-            ApplyDebugHaloScaleToSpawnedMarkers(null);
+            _debugHaloScaleBySize[HaloSizeSmall] = DebugHaloMultiplierDefault;
+            _debugHaloScaleBySize[HaloSizeMedium] = DebugHaloMultiplierDefault;
+            _debugHaloScaleBySize[HaloSizeLarge] = DebugHaloMultiplierDefault;
+            ApplyDebugHaloScaleToSpawnedMarkers();
         }
 
         private static string ParseBuildingIdFromSpawnName(string instanceName)
@@ -255,7 +288,7 @@ namespace CityTwin.UI
             return u > 0 ? instanceName.Substring(0, u) : null;
         }
 
-        private void ApplyDebugHaloScaleToSpawnedMarkers(string onlyBuildingIdOrNull)
+        private void ApplyDebugHaloScaleToSpawnedMarkers()
         {
             bool touched = false;
             foreach (var kv in _spawned)
@@ -264,8 +297,6 @@ namespace CityTwin.UI
                 if (go == null) continue;
                 string bid = ParseBuildingIdFromSpawnName(go.name);
                 if (string.IsNullOrEmpty(bid)) continue;
-                if (onlyBuildingIdOrNull != null && !string.Equals(bid, onlyBuildingIdOrNull, System.StringComparison.OrdinalIgnoreCase))
-                    continue;
 
                 var display = go.GetComponentInChildren<BuildingMarkerDisplay>(true);
                 if (display != null)

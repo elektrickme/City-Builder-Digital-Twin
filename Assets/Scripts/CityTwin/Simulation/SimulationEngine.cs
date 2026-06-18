@@ -221,6 +221,44 @@ namespace CityTwin.Simulation
             }
         }
 
+        /// <summary>Inverse of <see cref="SetConfig"/>: copy the engine's current scoring/accessibility values
+        /// back into the given config structs so they can be persisted. Fields the engine does not own
+        /// (e.g. epsilonDistance, walkingDistance, zoneRadius) are left untouched.</summary>
+        public void WriteTunablesToConfig(GameConfig.ScoringData scoring, GameConfig.AccessibilityData acc)
+        {
+            if (scoring != null)
+            {
+                scoring.norm = _norm;
+                scoring.equalDistrictWeight = _equalDistrictWeight;
+                scoring.influenceRefBase = _influenceRefBase;
+                scoring.influenceReferenceMeters = _influenceReferenceMeters;
+                scoring.distanceExponent = _distanceExponent;
+                scoring.distanceFloor = _distanceFloor;
+                scoring.distanceScale = _distanceScale;
+                scoring.maxRoadDistance = _maxRoadDistance;
+                scoring.qolBalancePenalty = _qolBalancePenalty;
+                scoring.qolCap = _qolCap;
+                scoring.sizeBoostSmall = _sizeBoostSmall;
+                scoring.sizeBoostMedium = _sizeBoostMedium;
+                scoring.sizeBoostLarge = _sizeBoostLarge;
+                scoring.nearCapSmall = _nearCapSmall;
+                scoring.nearCapMedium = _nearCapMedium;
+                scoring.nearCapLarge = _nearCapLarge;
+                scoring.impactRadiusSmall = _impactRadiusSmall;
+                scoring.impactRadiusMedium = _impactRadiusMedium;
+                scoring.impactRadiusLarge = _impactRadiusLarge;
+                scoring.qolWeightEnv = _qolWeightEnv;
+                scoring.qolWeightEco = _qolWeightEco;
+                scoring.qolWeightSaf = _qolWeightSaf;
+                scoring.qolWeightCul = _qolWeightCul;
+            }
+            if (acc != null)
+            {
+                acc.roadConnectRange = _roadConnectRange;
+                acc.defaultConnectionRadius = _defaultConnectionRadius;
+            }
+        }
+
         public void SetTransitGraph(TransitGraph graph)
         {
             _transitGraph = graph ?? new TransitGraph();
@@ -315,6 +353,29 @@ namespace CityTwin.Simulation
         {
             _placedTiles.Clear();
             _nextTileId = 0;
+            RecalculateMetrics();
+        }
+
+        /// <summary>Re-resolve road/stop connections for every placed tile against the current transit graph,
+        /// then recalculate. Call this after the stop layout or graph changes at runtime (e.g. a debug bus-stop
+        /// density change) so cached StopConnections/StopIndex don't point into a stale, resized stops list.</summary>
+        public void RefreshAllTileConnections()
+        {
+            for (int i = 0; i < _placedTiles.Count; i++)
+            {
+                var t = _placedTiles[i];
+                t.Inactive = IsOnObstacle(t.Position);
+                float connRange = GetConnectionRange(t.BuildingId);
+                t.RoadConnections = t.Inactive
+                    ? new List<TransitGraph.ConnectionPoint>()
+                    : _transitGraph.GetRoadConnections(t.Position, connRange);
+                t.StopConnections = t.Inactive
+                    ? new List<TransitGraph.StopConnectionPoint>()
+                    : _transitGraph.GetStopConnections(t.Position, connRange);
+                bool nearHub = !t.Inactive && IsNearAnyHub(t.Position, connRange + _hubConnectionRangeBonus);
+                t.Connected = t.RoadConnections.Count > 0 || t.StopConnections.Count > 0 || nearHub;
+                _placedTiles[i] = t;
+            }
             RecalculateMetrics();
         }
 
@@ -494,6 +555,7 @@ namespace CityTwin.Simulation
 
                         foreach (int si in seedStopIndices)
                         {
+                            if (si < 0 || si >= stops.Count) continue;
                             var stop = stops[si];
                             float walkToStop = Vector2.Distance(t.Position, stop.Position);
                             int fromId = stop.EdgeFromId;

@@ -179,7 +179,7 @@
             },
             "connectionRadius": 600.0,
             "localizationKey": "building.police_station.name",
-            "haloMultiplier": 0.9841201901435852
+            "haloMultiplier": 1.331318736076355
         },
         {
             "id": "fire_station",

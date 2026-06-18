@@ -115,6 +115,10 @@ namespace CityTwin.Config
             public float impactRadiusSmall = 75f;
             public float impactRadiusMedium = 112f;
             public float impactRadiusLarge = 150f;
+            /// <summary>Debug halo size multiplier per building size (marker size, connection range, footprint). 1 = prefab/catalog default.</summary>
+            public float haloMultiplierSmall = 1f;
+            public float haloMultiplierMedium = 1f;
+            public float haloMultiplierLarge = 1f;
             /// <summary>Pillar weight for per-hub QOL weighted average.</summary>
             public float qolWeightEnv = 1f;
             public float qolWeightEco = 1f;

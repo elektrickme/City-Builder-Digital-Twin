@@ -288,6 +288,125 @@ namespace CityTwin.Config
             return list.ToArray();
         }
 
+        /// <summary>Serialize the current in-memory config back to the StreamingAssets JSON file.
+        /// Preserves the original "localization" block verbatim (JsonUtility cannot round-trip nested dictionaries).
+        /// Keeps a .bak of the previous file. Not supported on WebGL (read-only StreamingAssets). Returns true on success.</summary>
+        public bool SaveToFile()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            Debug.LogWarning("[GameConfigLoader] SaveToFile is not supported on WebGL (read-only StreamingAssets).");
+            return false;
+#else
+            if (_cachedConfig == null)
+            {
+                Debug.LogWarning("[GameConfigLoader] SaveToFile: no config loaded.");
+                return false;
+            }
+            try
+            {
+                string path = Path.Combine(Application.streamingAssetsPath, configPath);
+                string existingLoc = File.Exists(path) ? ExtractLocalizationVerbatim(File.ReadAllText(path)) : null;
+
+                var root = BuildRoot(_cachedConfig);
+                string json = JsonUtility.ToJson(root, true);
+                if (!string.IsNullOrEmpty(existingLoc))
+                    json = InsertLocalizationBeforeFinalBrace(json, existingLoc);
+
+                if (File.Exists(path))
+                    File.Copy(path, path + ".bak", true);
+                File.WriteAllText(path, json);
+                Debug.Log($"[GameConfigLoader] Saved config to {path}");
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[GameConfigLoader] SaveToFile failed: {e}");
+                return false;
+            }
+#endif
+        }
+
+        /// <summary>Map the in-memory config back to the JsonUtility-serializable DTO (reverse of TryParse).</summary>
+        private static GameConfigRoot BuildRoot(GameConfig c)
+        {
+            return new GameConfigRoot
+            {
+                meta = c.Meta,
+                session = c.Session,
+                budget = c.Budget,
+                scoring = c.Scoring,
+                accessibility = c.Accessibility,
+                osc = c.Osc,
+                buildings = MapBuildingsToDto(c.Buildings),
+                map = c.Map,
+                tooltips = c.Tooltips,
+                stops = c.Stops,
+                tutorial = c.Tutorial,
+                inactivity = c.Inactivity,
+                endMessages = c.EndMessages
+            };
+        }
+
+        /// <summary>Inverse of <see cref="MapBuildings"/>: BuildingDefinition -> JSON DTO so building scores persist.</summary>
+        private static BuildingDto[] MapBuildingsToDto(BuildingDefinition[] defs)
+        {
+            if (defs == null || defs.Length == 0) return Array.Empty<BuildingDto>();
+            var arr = new BuildingDto[defs.Length];
+            for (int i = 0; i < defs.Length; i++)
+            {
+                var d = defs[i];
+                if (d == null) { arr[i] = new BuildingDto(); continue; }
+                arr[i] = new BuildingDto
+                {
+                    id = d.Id,
+                    category = d.Category,
+                    impactSize = d.ImpactSize,
+                    importance = d.Importance,
+                    price = d.Price,
+                    connectionRadius = d.ConnectionRadius,
+                    localizationKey = d.LocalizationKey,
+                    baseValues = d.BaseValues == null
+                        ? new BuildingDto.BaseValuesDto()
+                        : new BuildingDto.BaseValuesDto
+                        {
+                            environment = d.BaseValues.environment,
+                            economy = d.BaseValues.economy,
+                            healthSafety = d.BaseValues.healthSafety,
+                            cultureEdu = d.BaseValues.cultureEdu
+                        }
+                };
+            }
+            return arr;
+        }
+
+        /// <summary>Extract the original "localization": { ... } text (including the key) so it can be re-inserted verbatim.</summary>
+        private static string ExtractLocalizationVerbatim(string json)
+        {
+            int start = json.IndexOf("\"localization\"", StringComparison.OrdinalIgnoreCase);
+            if (start < 0) return null;
+            int braceStart = json.IndexOf('{', start);
+            if (braceStart < 0) return null;
+            int depth = 1;
+            int i = braceStart + 1;
+            while (i < json.Length && depth > 0)
+            {
+                if (json[i] == '{') depth++;
+                else if (json[i] == '}') depth--;
+                i++;
+            }
+            return json.Substring(start, i - start);
+        }
+
+        /// <summary>Insert a raw "localization": {...} block just before the closing brace of a serialized object.</summary>
+        private static string InsertLocalizationBeforeFinalBrace(string json, string localizationText)
+        {
+            int lastBrace = json.LastIndexOf('}');
+            if (lastBrace < 0) return json;
+            string head = json.Substring(0, lastBrace).TrimEnd();
+            string sep = head.EndsWith("{") ? "\n  " : ",\n  ";
+            return head + sep + localizationText + "\n}";
+        }
+
         /// <summary>Build a valid config when file is missing or parse fails.</summary>
         private static GameConfig CreateDefaultConfig()
         {

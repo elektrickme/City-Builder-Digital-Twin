@@ -3555,6 +3555,41 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 4307824720736515043}
   m_CullTransparentMesh: 1
+--- !u!1 &4339213162362401064
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 3842880901118647920}
+  m_Layer: 0
+  m_Name: RootTable
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &3842880901118647920
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4339213162362401064}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 2029685668143504195}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0.5, y: 0.5}
+  m_AnchorMax: {x: 0.5, y: 0.5}
+  m_AnchoredPosition: {x: 0, y: -95}
+  m_SizeDelta: {x: 1731.22, y: 745.48}
+  m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &4349088164341585690
 GameObject:
   m_ObjectHideFlags: 0
@@ -3894,7 +3929,7 @@ CanvasGroup:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 4581706902769120098}
   m_Enabled: 1
-  m_Alpha: 0.5
+  m_Alpha: 1
   m_Interactable: 1
   m_BlocksRaycasts: 1
   m_IgnoreParentGroups: 0
@@ -4649,6 +4684,7 @@ RectTransform:
   - {fileID: 2995223359434537989}
   - {fileID: 8727714981714084083}
   - {fileID: 2027663303933620132}
+  - {fileID: 3842880901118647920}
   - {fileID: 1302272572407293228}
   - {fileID: 3511586146516588916}
   - {fileID: 8186393670705881450}
@@ -5469,7 +5505,6 @@ GameObject:
   m_Component:
   - component: {fileID: 3536276807909373364}
   - component: {fileID: 6643672492996901187}
-  - component: {fileID: 3709685187679881772}
   m_Layer: 0
   m_Name: Holder
   m_TagString: Untagged
@@ -5506,36 +5541,6 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 6128481245135030967}
   m_CullTransparentMesh: 1
---- !u!114 &3709685187679881772
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6128481245135030967}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Image
-  m_Material: {fileID: 0}
-  m_Color: {r: 0.4339623, g: 0.4339623, b: 0.4339623, a: 1}
-  m_RaycastTarget: 1
-  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
-  m_Maskable: 1
-  m_OnCullStateChanged:
-    m_PersistentCalls:
-      m_Calls: []
-  m_Sprite: {fileID: 7282461348544508605, guid: ac446f0e0299f4e35a61dd1ace18e85c, type: 3}
-  m_Type: 0
-  m_PreserveAspect: 1
-  m_FillCenter: 1
-  m_FillMethod: 4
-  m_FillAmount: 1
-  m_FillClockwise: 1
-  m_FillOrigin: 0
-  m_UseSpriteMesh: 0
-  m_PixelsPerUnitMultiplier: 1
 --- !u!1 &6251333155638243070
 GameObject:
   m_ObjectHideFlags: 0
@@ -7942,6 +7947,7 @@ MonoBehaviour:
   configLoader: {fileID: 894284522082318943}
   localization: {fileID: 3511432302302745369}
   buildingSpawner: {fileID: 5185554299646834804}
+  inactivityPopup: {fileID: 0}
   tableArea: {fileID: 0}
   markerPrefab: {fileID: 3322005266591496291, guid: 050a21808db3a41089e05bc540a0ec45, type: 3}
   uiCamera: {fileID: 0}
@@ -8777,8 +8783,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: CityTwin::CityTwin.Core.GameInstanceRoot
   instanceId: 0
   oscReceiver: {fileID: 2119547827653478819}
-  listenPort: 3333
-  host: 127.0.0.1
+  listenPort: 3331
+  host: 192.168.50.1
   localizationService: {fileID: 3511432302302745369}
 --- !u!114 &2119547827653478819
 MonoBehaviour:
@@ -8797,8 +8803,8 @@ MonoBehaviour:
   _mapBundle: {fileID: 0}
   _workInEditor: 0
   _localHostMode: 1
-  _localHost: 127.0.0.1
-  _localPort: 3333
+  _localHost: 192.168.50.1
+  _localPort: 3331
 --- !u!114 &5147675912453083524
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -8822,7 +8828,8 @@ MonoBehaviour:
   hubLayoutManager: {fileID: 7405469177880821298}
   startScreen: {fileID: 5193655971921128358}
   endScreen: {fileID: 6747594391513884094}
-  tableScale: 300
+  inactivityPopup: {fileID: 0}
+  tableScale: 20
 --- !u!114 &5193655971921128358
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -8865,28 +8872,34 @@ MonoBehaviour:
   m_EditorClassIdentifier: CityTwin::CityTwin.Input.TileTrackingManager
   classIdToBuilding:
   - classId: 0
-    buildingId: garden
-  - classId: 1
-    buildingId: park
-  - classId: 2
-    buildingId: recycling_plant
-  - classId: 3
-    buildingId: office
-  - classId: 4
-    buildingId: mall
-  - classId: 5
-    buildingId: factory
-  - classId: 6
-    buildingId: police_station
-  - classId: 7
-    buildingId: hospital
-  - classId: 8
-    buildingId: school
-  - classId: 9
     buildingId: museum
+  - classId: 1
+    buildingId: fire_station
+  - classId: 2
+    buildingId: office
+  - classId: 3
+    buildingId: garden
+  - classId: 4
+    buildingId: circus
+  - classId: 5
+    buildingId: mall
+  - classId: 6
+    buildingId: park
+  - classId: 7
+    buildingId: school
+  - classId: 8
+    buildingId: recycling_plant
+  - classId: 9
+    buildingId: factory
+  - classId: 10
+    buildingId: hospital
+  - classId: 11
+    buildingId: police_station
   useInstancePort: 1
   useLocalTestingFallback: 1
   localTestingBuildingId: garden
+  smoothPosition: 0
+  positionSmoothingAlpha: 1
   _instanceRoot: {fileID: 5377118116814582998}
   _receiver: {fileID: 2119547827653478819}
 --- !u!114 &285011340426016590
@@ -8901,9 +8914,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 32f2e6f069f234273bc2065313ec9165, type: 3}
   m_Name: 
   m_EditorClassIdentifier: CityTwin::CityTwin.Simulation.SimulationEngine
-  logMetricsWhenChanged: 0
+  logMetricsWhenChanged: 1
   _connectionRangeOffset: 25
-  _hubConnectionRangeBonus: 50
+  _hubConnectionRangeBonus: 35
 --- !u!114 &894284522082318943
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -9020,12 +9033,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a3fc957a2c4374411bcb4e10ac377c6d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: CityTwin::CityTwin.UI.BuildingSpawner
-  contentRoot: {fileID: 2029685668143504195}
+  testingLocally: 1
+  contentRoot: {fileID: 3842880901118647920}
   buildingMarkerPrefab: {fileID: 3322005266591496291, guid: 050a21808db3a41089e05bc540a0ec45, type: 3}
-  tableSize: {x: 2504, y: 1265}
+  tableSize: {x: 250, y: 250}
   useContentRootRectSize: 1
   flipY: 1
   centerOrigin: 1
+  markerPositionOffset: {x: 0, y: 0}
 --- !u!114 &8298599917980661784
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -9923,15 +9938,15 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4424528427752460005, guid: 9393ef80882b345e3a2fd9de31b46f0e, type: 3}
       propertyPath: m_LocalScale.x
-      value: 0.6
+      value: 0.7
       objectReference: {fileID: 0}
     - target: {fileID: 4424528427752460005, guid: 9393ef80882b345e3a2fd9de31b46f0e, type: 3}
       propertyPath: m_LocalScale.y
-      value: 0.6
+      value: 0.7
       objectReference: {fileID: 0}
     - target: {fileID: 4424528427752460005, guid: 9393ef80882b345e3a2fd9de31b46f0e, type: 3}
       propertyPath: m_LocalScale.z
-      value: 0.6
+      value: 0.7
       objectReference: {fileID: 0}
     - target: {fileID: 4424528427752460005, guid: 9393ef80882b345e3a2fd9de31b46f0e, type: 3}
       propertyPath: m_LocalPosition.x
@@ -10454,15 +10469,15 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4424528427752460005, guid: 9393ef80882b345e3a2fd9de31b46f0e, type: 3}
       propertyPath: m_LocalScale.x
-      value: 0.6
+      value: 0.7
       objectReference: {fileID: 0}
     - target: {fileID: 4424528427752460005, guid: 9393ef80882b345e3a2fd9de31b46f0e, type: 3}
       propertyPath: m_LocalScale.y
-      value: 0.6
+      value: 0.7
       objectReference: {fileID: 0}
     - target: {fileID: 4424528427752460005, guid: 9393ef80882b345e3a2fd9de31b46f0e, type: 3}
       propertyPath: m_LocalScale.z
-      value: 0.6
+      value: 0.7
       objectReference: {fileID: 0}
     - target: {fileID: 4424528427752460005, guid: 9393ef80882b345e3a2fd9de31b46f0e, type: 3}
       propertyPath: m_LocalPosition.x
@@ -10660,15 +10675,15 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4424528427752460005, guid: 9393ef80882b345e3a2fd9de31b46f0e, type: 3}
       propertyPath: m_LocalScale.x
-      value: 0.6
+      value: 0.8
       objectReference: {fileID: 0}
     - target: {fileID: 4424528427752460005, guid: 9393ef80882b345e3a2fd9de31b46f0e, type: 3}
       propertyPath: m_LocalScale.y
-      value: 0.6
+      value: 0.8
       objectReference: {fileID: 0}
     - target: {fileID: 4424528427752460005, guid: 9393ef80882b345e3a2fd9de31b46f0e, type: 3}
       propertyPath: m_LocalScale.z
-      value: 0.6
+      value: 0.8
       objectReference: {fileID: 0}
     - target: {fileID: 4424528427752460005, guid: 9393ef80882b345e3a2fd9de31b46f0e, type: 3}
       propertyPath: m_LocalPosition.x

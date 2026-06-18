@@ -40,6 +40,22 @@ namespace CityTwin.Core
             _running = false;
         }
 
+        /// <summary>Configured session length in seconds (debug/playtest readout).</summary>
+        public int GameplaySeconds => gameplaySeconds;
+
+        /// <summary>Debug/playtest: set time left on the current countdown. The HUD reflects it next frame.</summary>
+        public void SetRemainingSeconds(float seconds)
+        {
+            _remainingSeconds = Mathf.Max(0f, seconds);
+        }
+
+        /// <summary>Debug/playtest: set session length and reset the current countdown to it.</summary>
+        public void SetGameplaySeconds(int seconds)
+        {
+            gameplaySeconds = Mathf.Max(0, seconds);
+            _remainingSeconds = gameplaySeconds;
+        }
+
         private void Update()
         {
             if (!_running) return;

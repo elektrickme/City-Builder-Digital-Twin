@@ -1,7 +1,8 @@
-using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using DG.Tweening;
 using CityTwin.Core;
 using CityTwin.Simulation;
 
@@ -78,6 +79,15 @@ public class DashboardController : MonoBehaviour
     {
         if (simulationEngine != null)
             simulationEngine.OnMetricsChanged -= RefreshMetrics;
+
+        // Stop any in-flight pulses and restore resting scale so a disabled/destroyed bar
+        // doesn't keep a tween alive or freeze at an inflated scale.
+        foreach (var kv in _pillarBaseScales)
+        {
+            if (kv.Key == null) continue;
+            kv.Key.DOKill(false);
+            kv.Key.localScale = kv.Value;
+        }
     }
 
     private void Update()
@@ -86,11 +96,23 @@ public class DashboardController : MonoBehaviour
             timerText.text = sessionTimer.FormatTime();
         if (coordinator != null && budgetText != null)
             budgetText.text = coordinator.Budget.ToString();
+
+        // Drive the metric smoothing every frame so the bars/texts converge to the live values and
+        // settle to 0 when the last building is removed. OnMetricsChanged fires only on discrete edits,
+        // which is too sparse for the lerp to reach its target on its own (a single removal would
+        // otherwise nudge the bars ~5% toward 0 and then freeze).
+        RefreshMetrics();
     }
 
     public enum Pillar { Environment, Economy, HealthSafety, CultureEdu, Qol }
 
-    /// <summary>Brief scale punch on a pillar bar to draw the eye after a placement.</summary>
+    // Resting scale per pillar transform, captured before the first pulse so repeated pulses always
+    // start from the true base and never compound into a runaway scale.
+    private readonly Dictionary<Transform, Vector3> _pillarBaseScales = new Dictionary<Transform, Vector3>();
+
+    /// <summary>Brief scale punch on a pillar bar to draw the eye after a placement.
+    /// Re-pulsing kills the in-flight tween and restores the base scale first, so rapid
+    /// placements can't stack pulses and blow up the scale.</summary>
     public void PunchPillar(Pillar pillar, float strength = 0.18f, float duration = 0.35f)
     {
         RectTransform target = pillar switch
@@ -103,27 +125,21 @@ public class DashboardController : MonoBehaviour
             _                    => null
         };
         if (target == null || !isActiveAndEnabled) return;
-        StopCoroutine(nameof(PunchRoutineRunner));
-        StartCoroutine(PunchRoutine(target, strength, duration));
-    }
 
-    private void PunchRoutineRunner() { /* marker for StopCoroutine */ }
-
-    private static IEnumerator PunchRoutine(RectTransform rt, float strength, float duration)
-    {
-        if (rt == null) yield break;
-        Vector3 baseScale = rt.localScale;
-        float t = 0f;
-        while (t < duration)
+        // Capture the true resting scale on first use (no pulse is active yet, so it is not inflated).
+        if (!_pillarBaseScales.TryGetValue(target, out Vector3 baseScale))
         {
-            t += Time.unscaledDeltaTime;
-            float u = Mathf.Clamp01(t / duration);
-            // damped sine: peaks then settles
-            float wobble = Mathf.Sin(u * Mathf.PI * 2f) * (1f - u) * strength;
-            rt.localScale = baseScale * (1f + wobble);
-            yield return null;
+            baseScale = target.localScale;
+            _pillarBaseScales[target] = baseScale;
         }
-        rt.localScale = baseScale;
+
+        // Kill any in-flight pulse on this target and snap back to base before re-punching, so
+        // overlapping calls can't compound. DOPunchScale returns to the scale at tween start.
+        target.DOKill(false);
+        target.localScale = baseScale;
+        target.DOPunchScale(baseScale * strength, duration, vibrato: 1, elasticity: 0.5f)
+            .SetUpdate(true)
+            .SetTarget(target);
     }
 
     private void RefreshMetrics()

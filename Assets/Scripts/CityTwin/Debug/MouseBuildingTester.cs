@@ -26,6 +26,7 @@ public class MouseBuildingTester : MonoBehaviour
     [SerializeField] private GameConfigLoader configLoader;
     [SerializeField] private LocalizationService localization;
     [SerializeField] private BuildingSpawner buildingSpawner;
+    [SerializeField] private InactivityPopupController inactivityPopup;
     [SerializeField] private RectTransform tableArea;
     [SerializeField] private GameObject markerPrefab;
     [Tooltip("UI camera used for ScreenPointToLocalPointInRectangle. Leave null to use Camera.main.")]
@@ -66,9 +67,10 @@ public class MouseBuildingTester : MonoBehaviour
     private bool _pickerOpen;
     private Vector2 _pickerScroll;
     private string _pickerFilter = "";
-    private string _pickerHaloSyncBuildingId;
-    private float _pickerHaloSlider = 1f;
     private Texture2D _pickerRingTexture;
+    private bool _advancedOpen;
+    private string _lastSaveMessage;
+    private bool _lastSaveOk = true;
 
     private void Awake()
     {
@@ -78,6 +80,8 @@ public class MouseBuildingTester : MonoBehaviour
         if (configLoader == null) configLoader = GetComponentInChildren<GameConfigLoader>(true);
         if (localization == null) localization = GetComponentInChildren<LocalizationService>(true);
         if (buildingSpawner == null) buildingSpawner = GetComponentInChildren<BuildingSpawner>(true);
+        if (inactivityPopup == null) inactivityPopup = GetComponentInChildren<InactivityPopupController>(true);
+        if (inactivityPopup == null) inactivityPopup = GetComponentInParent<InactivityPopupController>(true);
         if (tableArea == null) tableArea = GetComponentInChildren<RectTransform>(true);
         if (tableArea == null && buildingSpawner != null) tableArea = buildingSpawner.ContentRoot;
         if (uiCamera == null) uiCamera = Camera.main;
@@ -298,8 +302,7 @@ public class MouseBuildingTester : MonoBehaviour
         if (GUILayout.Button("Reset halos", GUILayout.Width(88f)) && buildingSpawner != null)
         {
             buildingSpawner.ClearDebugHaloScales();
-            _pickerHaloSlider = BuildingSpawner.DebugHaloMultiplierDefault;
-            simulationEngine?.RecalculateMetrics();
+            simulationEngine?.RefreshAllTileConnections();
         }
         if (GUILayout.Button("Close", GUILayout.Width(70f)))
             _pickerOpen = false;
@@ -313,15 +316,6 @@ public class MouseBuildingTester : MonoBehaviour
             GUILayout.EndArea();
             GUI.matrix = oldMatrix;
             return;
-        }
-
-        if (_currentBuildingId != _pickerHaloSyncBuildingId)
-        {
-            _pickerHaloSyncBuildingId = _currentBuildingId;
-            if (buildingSpawner != null && !string.IsNullOrEmpty(_currentBuildingId))
-                _pickerHaloSlider = buildingSpawner.GetDebugHaloScale(_currentBuildingId);
-            else
-                _pickerHaloSlider = BuildingSpawner.DebugHaloMultiplierDefault;
         }
 
         BuildingDefinition selectedDef = null;
@@ -415,7 +409,7 @@ public class MouseBuildingTester : MonoBehaviour
                 alignment = TextAnchor.UpperCenter
             };
             titleStyle.normal.textColor = new Color(0.3f, 0.85f, 1f);
-            GUI.Label(new Rect(rightRect.x, rightRect.y + 6f, rightRect.width, 28f), "Scoring Parameters", titleStyle);
+            GUI.Label(new Rect(rightRect.x, rightRect.y + 6f, rightRect.width, 28f), "Playtesting Controls", titleStyle);
 
             float rightInnerH = rightRect.height - 32f - pad;
             GUILayout.BeginArea(new Rect(rightRect.x + pad, rightRect.y + 32f, rightRect.width - pad * 2f, rightInnerH));
@@ -423,45 +417,137 @@ public class MouseBuildingTester : MonoBehaviour
             _slidersScroll = GUILayout.BeginScrollView(_slidersScroll, GUI.skin.box, GUILayout.ExpandHeight(true));
 
             bool changed = false;
-            changed |= DrawSlider("Score Normalizer (Norm)",
-                "1 full contribution = NORM raw -> 100%. Higher = harder to fill pillars.",
-                simulationEngine.Norm, 1f, 500f, v => simulationEngine.Norm = v);
-            changed |= DrawSlider("Building Strength (Influence Ref Base)",
-                "Divides building base value. Higher = weaker per-building impact.",
-                simulationEngine.InfluenceRefBase, 0.1f, 100f, v => simulationEngine.InfluenceRefBase = v);
-            changed |= DrawSlider("Decay Reference Distance (m)",
-                "Distance where decay curve = 50%. Higher = buildings reach further.",
-                simulationEngine.InfluenceReferenceMeters, 0.1f, 100f, v => simulationEngine.InfluenceReferenceMeters = v);
-            changed |= DrawSlider("Distance Decay Steepness",
-                "Exponent for falloff curve. Higher = sharper drop-off with distance.",
-                simulationEngine.DistanceExponent, 0f, 5f, v => simulationEngine.DistanceExponent = v);
-            changed |= DrawSlider("Min Effective Distance",
-                "Floor in game units. Prevents near-zero path from inflating score.",
-                simulationEngine.DistanceFloor, 0f, 200f, v => simulationEngine.DistanceFloor = v);
-            changed |= DrawSlider("Units-to-Meters Scale",
-                "Game units / scale = meters. Controls how far 1 unit feels.",
-                simulationEngine.DistanceScale, 1f, 500f, v => simulationEngine.DistanceScale = v);
-            changed |= DrawSlider("Max Road Network Reach",
-                "Max path length along roads for scoring. Beyond = no influence.",
-                simulationEngine.MaxRoadDistance, 1f, 600f, v => simulationEngine.MaxRoadDistance = v);
-            changed |= DrawSlider("Road Connection Range",
-                "Max distance from building to road to count as connected.",
-                simulationEngine.RoadConnectRange, 1f, 1000f, v => simulationEngine.RoadConnectRange = v);
+
+            DrawHelpBox();
+
+            DrawSaveRow();
+
+            // Playtesting (always visible)
+            DrawSectionHeader("Playtesting", "Live balancing knobs. Use Save config to persist; otherwise they reset on restart / relaunch.");
+
+            if (coordinator != null)
+            {
+                DrawIntSlider("Starting budget",
+                    "Money each round starts with (saved to config). Setting it also tops up your current budget so you can test now.",
+                    coordinator.DebugStartingBudget, 0, 20000, v => coordinator.SetStartingBudgetDebug(v));
+
+                DrawIntSlider("Session length (s)",
+                    "Total round time in seconds. Resets the countdown to this value.",
+                    coordinator.DebugSessionLength, 30, 900, v => coordinator.SetSessionLengthDebug(v));
+
+                DrawIntSlider("Time remaining (s)",
+                    "Seconds left on the current countdown. Set to 0 to trigger the end screen.",
+                    Mathf.RoundToInt(coordinator.DebugTimeRemaining), 0, 900, v => coordinator.SetTimeRemainingDebug(v));
+
+                if (configLoader != null && configLoader.Config != null && configLoader.Config.Stops != null)
+                {
+                    int stopCount = simulationEngine != null && simulationEngine.TransitGraph != null
+                        ? simulationEngine.TransitGraph.Stops.Count : 0;
+                    DrawSlider("Bus stop spacing",
+                        $"Distance between stops along roads. Lower = denser. Stop count ~ road length / spacing. Now: {stopCount} stops.",
+                        configLoader.Config.Stops.spacing, 20f, 600f, v => coordinator.SetBusStopDensityDebug(v));
+                }
+            }
+            else
+            {
+                GUILayout.Label("Assign a GameInstanceCoordinator to enable budget / time / bus-stop controls.", GUI.skin.box);
+            }
+
+            if (inactivityPopup != null)
+            {
+                DrawIntSlider("Inactivity timeout (s)",
+                    "Idle seconds with no building activity before the inactivity popup appears.",
+                    Mathf.RoundToInt(inactivityPopup.TimeoutSeconds), 5, 300, v => inactivityPopup.TimeoutSeconds = v);
+            }
+
+            DrawDisabledRow("Map select (A / B / C / D)", "Coming soon - build the map presets first.");
+
+            // Quality of Life
+            DrawSectionHeader("Quality of Life", "How the city QOL score is graded and balanced.");
             changed |= DrawSlider("QOL Inequality Penalty",
-                "City QOL -= penalty x (best hub - worst hub). Rewards balance.",
+                "City QOL -= penalty x (best hub - worst hub). Higher punishes uneven cities; rewards spreading quality.",
                 simulationEngine.QolBalancePenalty, 0f, 2f, v => simulationEngine.QolBalancePenalty = v);
             changed |= DrawSlider("QOL Maximum Cap",
-                "Hard ceiling on final QOL score.",
+                "Hard ceiling on final QOL. QOL can never exceed this, so pass bands above it are unreachable.",
                 simulationEngine.QolCap, 1f, 100f, v => simulationEngine.QolCap = v);
+
+            // Building reach
+            DrawSectionHeader("Building reach (impact radius)", "How far each building size searches for bus stops to score through.");
             changed |= DrawSlider("Impact Radius - Small",
-                "How far small buildings search for stops to score through.",
+                "Stop-search radius for small buildings.",
                 simulationEngine.ImpactRadiusSmall, 1f, 400f, v => simulationEngine.ImpactRadiusSmall = v);
             changed |= DrawSlider("Impact Radius - Medium",
-                "How far medium buildings search for stops to score through.",
+                "Stop-search radius for medium buildings.",
                 simulationEngine.ImpactRadiusMedium, 1f, 400f, v => simulationEngine.ImpactRadiusMedium = v);
             changed |= DrawSlider("Impact Radius - Large",
-                "How far large buildings search for stops to score through.",
+                "Stop-search radius for large buildings.",
                 simulationEngine.ImpactRadiusLarge, 1f, 400f, v => simulationEngine.ImpactRadiusLarge = v);
+
+            // Building halo (by size) - applies to all buildings of that size, placed or future.
+            if (buildingSpawner != null)
+            {
+                DrawSectionHeader("Building halo (by size)",
+                    "Halo multiplier per building size. Affects marker size, connection reach, and footprint for ALL buildings of that size, including already-placed ones.");
+                DrawHaloSizeSlider("Halo - Small", BuildingSpawner.HaloSizeSmall);
+                DrawHaloSizeSlider("Halo - Medium", BuildingSpawner.HaloSizeMedium);
+                DrawHaloSizeSlider("Halo - Large", BuildingSpawner.HaloSizeLarge);
+            }
+
+            // Selected building (picked in the left panel): the 4 scores. Halo is tuned by size above.
+            if (selectedDef != null)
+            {
+                DrawSectionHeader($"Selected building ({selectedDef.Id})",
+                    "Per-building scores feed the completion score. Halo is tuned by size in the section above.");
+
+                if (buildingSpawner != null && buildingSpawner.TryGetEstimatedBuildingRadius(selectedDef.Id, out float haloPxRight))
+                    GUILayout.Label($"Effective halo radius ~{haloPxRight:F0}px (size: {selectedDef.ImpactSize})", GUI.skin.label);
+
+                if (selectedDef.BaseValues != null)
+                {
+                    var bv = selectedDef.BaseValues;
+                    changed |= DrawSlider("Environment", "This building's Environment contribution.", bv.environment, -100f, 100f, v => bv.environment = v);
+                    changed |= DrawSlider("Economy", "This building's Economy contribution.", bv.economy, -100f, 100f, v => bv.economy = v);
+                    changed |= DrawSlider("Health & Safety", "This building's Health/Safety contribution.", bv.healthSafety, -100f, 100f, v => bv.healthSafety = v);
+                    changed |= DrawSlider("Culture & Edu", "This building's Culture/Education contribution.", bv.cultureEdu, -100f, 100f, v => bv.cultureEdu = v);
+                }
+            }
+
+            // QOL pass thresholds
+            DrawQolBands();
+
+            // Advanced (dev), collapsed by default
+            GUILayout.Space(10f);
+            _advancedOpen = GUILayout.Toggle(_advancedOpen,
+                _advancedOpen ? "[-] Advanced (dev) - scoring internals" : "[+] Advanced (dev) - scoring internals",
+                GUI.skin.button);
+            if (_advancedOpen)
+            {
+                DrawSectionHeader("Advanced (dev)", "Scoring-curve internals. Already dialed in - usually leave these alone.");
+                changed |= DrawSlider("Score Normalizer (Norm)",
+                    "1 full contribution = NORM raw -> 100%. Higher = harder to fill pillars.",
+                    simulationEngine.Norm, 1f, 500f, v => simulationEngine.Norm = v);
+                changed |= DrawSlider("Building Strength (Influence Ref Base)",
+                    "Divides building base value. Higher = weaker per-building impact.",
+                    simulationEngine.InfluenceRefBase, 0.1f, 100f, v => simulationEngine.InfluenceRefBase = v);
+                changed |= DrawSlider("Decay Reference Distance (m)",
+                    "Distance where decay curve = 50%. Higher = buildings reach further.",
+                    simulationEngine.InfluenceReferenceMeters, 0.1f, 100f, v => simulationEngine.InfluenceReferenceMeters = v);
+                changed |= DrawSlider("Distance Decay Steepness",
+                    "Exponent for falloff curve. Higher = sharper drop-off with distance.",
+                    simulationEngine.DistanceExponent, 0f, 5f, v => simulationEngine.DistanceExponent = v);
+                changed |= DrawSlider("Min Effective Distance",
+                    "Floor in game units. Prevents near-zero path from inflating score.",
+                    simulationEngine.DistanceFloor, 0f, 200f, v => simulationEngine.DistanceFloor = v);
+                changed |= DrawSlider("Units-to-Meters Scale",
+                    "Game units / scale = meters. Controls how far 1 unit feels.",
+                    simulationEngine.DistanceScale, 1f, 500f, v => simulationEngine.DistanceScale = v);
+                changed |= DrawSlider("Max Road Network Reach",
+                    "Max path length along roads for scoring. Beyond = no influence.",
+                    simulationEngine.MaxRoadDistance, 1f, 600f, v => simulationEngine.MaxRoadDistance = v);
+                changed |= DrawSlider("Road Connection Range",
+                    "Max distance from building to road to count as connected.",
+                    simulationEngine.RoadConnectRange, 1f, 1000f, v => simulationEngine.RoadConnectRange = v);
+            }
 
             if (changed)
                 simulationEngine.RecalculateMetrics();
@@ -525,31 +611,16 @@ public class MouseBuildingTester : MonoBehaviour
         GUILayout.BeginVertical(GUILayout.ExpandWidth(true));
         if (buildingSpawner != null)
         {
-            DrawSlider(
-                "Halo multiplier (×)",
-                "Applied to Halo Area scale on every placed marker of this type. 1× = prefab + catalog defaults. Also drives connection radius and footprints.",
-                _pickerHaloSlider,
-                BuildingSpawner.DebugHaloMultiplierMin,
-                BuildingSpawner.DebugHaloMultiplierMax,
-                v =>
-                {
-                    _pickerHaloSlider = v;
-                    buildingSpawner.SetDebugHaloScale(selected.Id, v);
-                    simulationEngine?.RecalculateMetrics();
-                });
             buildingSpawner.TryGetEstimatedBuildingRadius(selected.Id, out haloPx);
-            GUILayout.Label($"Effective halo radius ~{haloPx:F0}px (table units)", GUI.skin.label);
-        }
-        else
-        {
-            GUILayout.Label("Assign BuildingSpawner to tweak halo multiplier on spawned markers.");
+            GUILayout.Label($"Halo radius ~{haloPx:F0}px (tune on the right)", GUI.skin.label);
         }
 
         if (simulationEngine != null && simulationEngine.TryGetImpactSearchRadius(selected.Id, out float impactR))
-            GUILayout.Label($"Stop search radius ({selected.ImpactSize}): {impactR:F0} units (see scoring panel sliders)", GUI.skin.label);
+            GUILayout.Label($"Stop search radius ({selected.ImpactSize}): {impactR:F0} units", GUI.skin.label);
 
         GUILayout.EndVertical();
         GUILayout.EndHorizontal();
+
         GUILayout.EndVertical();
     }
 
@@ -679,7 +750,135 @@ public class MouseBuildingTester : MonoBehaviour
 
     private Vector2 _slidersScroll;
 
-    private static bool DrawSlider(string label, string description, float current, float min, float max, System.Action<float> setter)
+    private void DrawSaveRow()
+    {
+        GUILayout.BeginVertical(GUI.skin.box);
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Button("Save config to file", GUILayout.Height(26f), GUILayout.Width(160f)))
+        {
+            _lastSaveOk = coordinator != null && coordinator.SaveConfigDebug();
+            _lastSaveMessage = _lastSaveOk
+                ? $"Saved to game_config.json  ({System.DateTime.Now:HH:mm:ss})"
+                : (coordinator == null ? "No coordinator found - cannot save." : "Save failed - see console.");
+        }
+        GUILayout.FlexibleSpace();
+        GUILayout.EndHorizontal();
+
+        var msgStyle = new GUIStyle(GUI.skin.label) { wordWrap = true, fontSize = 10 };
+        if (string.IsNullOrEmpty(_lastSaveMessage))
+        {
+            msgStyle.normal.textColor = new Color(0.7f, 0.7f, 0.7f);
+            GUILayout.Label("Writes current tweaks (including building halos) to StreamingAssets/game_config.json (keeps a .bak).", msgStyle);
+        }
+        else
+        {
+            msgStyle.normal.textColor = _lastSaveOk ? new Color(0.4f, 1f, 0.5f) : new Color(1f, 0.6f, 0.5f);
+            GUILayout.Label(_lastSaveMessage, msgStyle);
+        }
+        GUILayout.EndVertical();
+    }
+
+    private void DrawHaloSizeSlider(string label, string sizeKey)
+    {
+        if (buildingSpawner == null) return;
+        DrawSlider(label,
+            "1x = prefab/catalog default. Higher = bigger halo and longer reach for this size.",
+            buildingSpawner.GetDebugHaloScaleForSize(sizeKey),
+            BuildingSpawner.DebugHaloMultiplierMin,
+            BuildingSpawner.DebugHaloMultiplierMax,
+            v =>
+            {
+                buildingSpawner.SetDebugHaloScaleForSize(sizeKey, v);
+                simulationEngine?.RefreshAllTileConnections();
+            });
+    }
+
+    private void DrawHelpBox()
+    {
+        var s = new GUIStyle(GUI.skin.box) { wordWrap = true, alignment = TextAnchor.UpperLeft, fontSize = 11 };
+        s.normal.textColor = new Color(0.85f, 0.9f, 1f);
+        GUILayout.Label(
+            "How to use\n" +
+            $"- Toggle this menu with the {togglePickerKey} key.\n" +
+            "- Playtesting = knobs to tune while balancing. Advanced (dev) = scoring internals, already dialed in.\n" +
+            "- Changes apply live. Use 'Save config to file' to persist; otherwise they reset on restart / relaunch.\n" +
+            "- Keys 1-4 pick a building; click the table to place; drag to move; hold ESC + click to delete.",
+            s);
+    }
+
+    private static void DrawSectionHeader(string title, string subtitle)
+    {
+        GUILayout.Space(4f);
+        var t = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, fontSize = 13 };
+        t.normal.textColor = new Color(0.3f, 0.85f, 1f);
+        GUILayout.Label(title, t);
+        if (!string.IsNullOrEmpty(subtitle))
+        {
+            var st = new GUIStyle(GUI.skin.label) { wordWrap = true, fontSize = 10 };
+            st.normal.textColor = new Color(0.7f, 0.7f, 0.7f);
+            GUILayout.Label(subtitle, st);
+        }
+    }
+
+    private static void DrawDisabledRow(string label, string note)
+    {
+        var oc = GUI.color;
+        GUI.color = new Color(1f, 1f, 1f, 0.45f);
+        GUILayout.BeginVertical(GUI.skin.box);
+        var l = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold };
+        GUILayout.Label(label, l);
+        var d = new GUIStyle(GUI.skin.label) { fontSize = 10, wordWrap = true, fontStyle = FontStyle.Italic };
+        GUILayout.Label(note, d);
+        GUILayout.EndVertical();
+        GUI.color = oc;
+    }
+
+    private void DrawQolBands()
+    {
+        DrawSectionHeader("QOL pass thresholds",
+            "Final QOL when the timer ends picks an end-screen band (the 'completion score'). Drag a cutoff to move where each band starts.");
+
+        var bands = configLoader != null && configLoader.Config != null ? configLoader.Config.EndMessages : null;
+        if (bands == null || bands.Length == 0)
+        {
+            GUILayout.Label("No end-message bands found in config.", GUI.skin.box);
+            return;
+        }
+
+        int curQol = simulationEngine != null ? Mathf.RoundToInt(simulationEngine.Qol) : -1;
+        int activeBand = -1;
+        for (int i = 0; i < bands.Length; i++)
+            if (bands[i] != null && curQol >= bands[i].min && curQol <= bands[i].max) { activeBand = i; break; }
+
+        for (int i = 0; i < bands.Length; i++)
+        {
+            var b = bands[i];
+            if (b == null) continue;
+            var oc = GUI.color;
+            if (i == activeBand) GUI.color = new Color(0.3f, 1f, 0.5f, 1f);
+            GUILayout.Label($"{(i == activeBand ? "> " : "   ")}Band {i + 1}: {b.min}-{b.max}  ({b.titleKey})");
+            GUI.color = oc;
+        }
+
+        if (curQol >= 0)
+            GUILayout.Label($"Current QOL = {curQol}  ->  " + (activeBand >= 0 ? $"Band {activeBand + 1}" : "no band"), GUI.skin.box);
+
+        for (int i = 0; i < bands.Length - 1; i++)
+        {
+            if (bands[i] == null || bands[i + 1] == null) continue;
+            int idx = i;
+            DrawIntSlider($"Cutoff: Band {i + 1} -> {i + 2}",
+                "QOL value where the next band begins.",
+                bands[i].max, 0, 100, v =>
+                {
+                    v = Mathf.Clamp(v, bands[idx].min, bands[idx + 1].max);
+                    bands[idx].max = v;
+                    bands[idx + 1].min = v;
+                });
+        }
+    }
+
+    private static float DrawSliderRaw(string label, string description, float current, float min, float max, string valueText)
     {
         var labelStyle = new GUIStyle(GUI.skin.label);
         labelStyle.normal.textColor = Color.white;
@@ -698,7 +897,7 @@ public class MouseBuildingTester : MonoBehaviour
 
         GUILayout.BeginHorizontal();
         GUILayout.Label(label, labelStyle, GUILayout.ExpandWidth(true));
-        GUILayout.Label(current.ToString("F2"), valueStyle, GUILayout.Width(70f));
+        GUILayout.Label(valueText, valueStyle, GUILayout.Width(70f));
         GUILayout.EndHorizontal();
 
         if (!string.IsNullOrEmpty(description))
@@ -717,10 +916,27 @@ public class MouseBuildingTester : MonoBehaviour
         float next = GUI.HorizontalSlider(sliderRect, current, min, max);
 
         GUILayout.EndVertical();
+        return next;
+    }
 
+    private static bool DrawSlider(string label, string description, float current, float min, float max, System.Action<float> setter)
+    {
+        float next = DrawSliderRaw(label, description, current, min, max, current.ToString("F2"));
         if (!Mathf.Approximately(next, current))
         {
             setter(next);
+            return true;
+        }
+        return false;
+    }
+
+    private static bool DrawIntSlider(string label, string description, int current, int min, int max, System.Action<int> setter)
+    {
+        float next = DrawSliderRaw(label, description, current, min, max, current.ToString("0"));
+        int rounded = Mathf.RoundToInt(next);
+        if (rounded != current)
+        {
+            setter(rounded);
             return true;
         }
         return false;

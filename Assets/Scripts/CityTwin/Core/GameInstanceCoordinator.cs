@@ -31,6 +31,8 @@ namespace CityTwin.Core
         [SerializeField] private StartScreenController startScreen;
         [Tooltip("Optional. End-of-session overlay. Restart will hide it.")]
         [SerializeField] private EndScreenController endScreen;
+        [Tooltip("Optional. Inactivity popup. The debug Save persists its timeout into config.")]
+        [SerializeField] private InactivityPopupController inactivityPopup;
 
         private readonly Dictionary<string, string> _oscToEngineTileId = new Dictionary<string, string>();
         private readonly HashSet<string> _overBudgetTiles = new HashSet<string>();
@@ -62,6 +64,7 @@ namespace CityTwin.Core
             if (placementOverlapValidator == null) placementOverlapValidator = GetComponentInChildren<PlacementOverlapValidator>(true);
             if (startScreen == null) startScreen = GetComponentInChildren<CityTwin.UI.StartScreenController>(true);
             if (endScreen == null) endScreen = GetComponentInChildren<CityTwin.UI.EndScreenController>(true);
+            if (inactivityPopup == null) inactivityPopup = GetComponentInChildren<CityTwin.UI.InactivityPopupController>(true);
             if (configLoader != null)
             {
                 configLoader.OnConfigLoaded += HandleConfigLoaded;
@@ -171,6 +174,10 @@ namespace CityTwin.Core
 
             Budget = cfg.Budget?.startingBudget ?? 1000;
             simulationEngine?.SetBuildingCatalog(new List<BuildingDefinition>(cfg.Buildings ?? System.Array.Empty<BuildingDefinition>()));
+            buildingSpawner?.InitDebugHaloScales(cfg.Buildings,
+                cfg.Scoring != null ? cfg.Scoring.haloMultiplierSmall : 1f,
+                cfg.Scoring != null ? cfg.Scoring.haloMultiplierMedium : 1f,
+                cfg.Scoring != null ? cfg.Scoring.haloMultiplierLarge : 1f);
 
             simulationEngine?.SetConfig(cfg.Scoring, cfg.Accessibility);
 
@@ -262,6 +269,80 @@ namespace CityTwin.Core
             startScreen?.ShowStartScreen();
 
             Debug.Log($"[Coordinator] Restart complete — budget={Budget}, preset={hubLayoutManager?.ActivePreset?.name}");
+        }
+
+        // ── Debug / playtest setters (used by the secret menu, MouseBuildingTester) ──
+
+        /// <summary>Debug/playtest: starting budget a new round begins with (this is what Save persists).
+        /// Also tops the current budget up to it so the value can be tested immediately. Decoupled from the
+        /// live, spent-down budget so saving never captures a half-spent amount.</summary>
+        public void SetStartingBudgetDebug(int amount)
+        {
+            amount = Mathf.Max(0, amount);
+            var cfg = configLoader != null ? configLoader.Config : null;
+            if (cfg != null && cfg.Budget != null) cfg.Budget.startingBudget = amount;
+            Budget = amount;
+        }
+
+        /// <summary>Starting budget from config (stable; not the live spent-down budget).</summary>
+        public int DebugStartingBudget => configLoader != null && configLoader.Config != null && configLoader.Config.Budget != null
+            ? configLoader.Config.Budget.startingBudget : 0;
+
+        /// <summary>Debug/playtest: seconds left on the current countdown.</summary>
+        public void SetTimeRemainingDebug(float seconds)
+        {
+            sessionTimer?.SetRemainingSeconds(seconds);
+        }
+
+        /// <summary>Debug/playtest: session length in seconds (resets the current countdown).</summary>
+        public void SetSessionLengthDebug(int seconds)
+        {
+            sessionTimer?.SetGameplaySeconds(seconds);
+        }
+
+        /// <summary>Debug/playtest: change bus-stop spacing (lower = denser) and regenerate stops live.
+        /// Density relates to road length: stop count is roughly road length / spacing.</summary>
+        public void SetBusStopDensityDebug(float spacing)
+        {
+            if (configLoader != null && configLoader.Config != null && configLoader.Config.Stops != null)
+                configLoader.Config.Stops.spacing = Mathf.Max(1f, spacing);
+            GenerateTransitStops();
+            // Placed tiles cache stop indices into the previous stops list; refresh them before
+            // recalc, otherwise RecalculateMetrics indexes a resized list and throws.
+            simulationEngine?.RefreshAllTileConnections();
+        }
+
+        /// <summary>Debug/playtest readouts for the secret menu.</summary>
+        public float DebugTimeRemaining => sessionTimer != null ? sessionTimer.RemainingSeconds : 0f;
+        public int DebugSessionLength => sessionTimer != null ? sessionTimer.GameplaySeconds : 0;
+
+        /// <summary>Debug/playtest: sync live tweaks into the loaded config and write it to game_config.json.
+        /// Persists scoring/accessibility (from the engine), session length, inactivity timeout, and per-size
+        /// halo multipliers; starting budget, stop spacing, end-message bands, and building scores are already
+        /// edited into the config in place. Returns true on success.</summary>
+        public bool SaveConfigDebug()
+        {
+            var cfg = configLoader != null ? configLoader.Config : null;
+            if (cfg == null)
+            {
+                Debug.LogWarning("[Coordinator] SaveConfigDebug: no config loaded.");
+                return false;
+            }
+
+            simulationEngine?.WriteTunablesToConfig(cfg.Scoring, cfg.Accessibility);
+            if (cfg.Session != null && sessionTimer != null) cfg.Session.gameplaySeconds = sessionTimer.GameplaySeconds;
+            if (cfg.Inactivity != null && inactivityPopup != null) cfg.Inactivity.timeoutSeconds = inactivityPopup.TimeoutSeconds;
+            // Starting budget is edited directly via SetStartingBudgetDebug, so it is already in cfg.Budget.
+
+            // Persist per-size halo multipliers from the spawner into the scoring config.
+            if (buildingSpawner != null && cfg.Scoring != null)
+            {
+                cfg.Scoring.haloMultiplierSmall = buildingSpawner.GetDebugHaloScaleForSize(BuildingSpawner.HaloSizeSmall);
+                cfg.Scoring.haloMultiplierMedium = buildingSpawner.GetDebugHaloScaleForSize(BuildingSpawner.HaloSizeMedium);
+                cfg.Scoring.haloMultiplierLarge = buildingSpawner.GetDebugHaloScaleForSize(BuildingSpawner.HaloSizeLarge);
+            }
+
+            return configLoader.SaveToFile();
         }
 
         private void ApplyRegistryHubsToSimulation()
