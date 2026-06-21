@@ -11,7 +11,11 @@ The in-game debug overlay used for balancing. It lives in `MouseBuildingTester.c
 ## Changes are live - save them when you're happy
 Every control takes effect immediately. They are NOT auto-saved: if you just close the menu, the tweaks reset on the next restart / relaunch.
 
-When a configuration feels good, click **Save config to file** (top of the right panel). It writes the current values to `StreamingAssets/game_config.json` and keeps a `.bak` of the previous file. Persisted: scoring values, impact radii, QOL penalty/cap, bus stop spacing, session length, starting budget, inactivity timeout, the QOL pass bands, per-building scores, and per-size halo multipliers (Small/Medium/Large). Saving writes to disk, so it works in the Editor and desktop builds but not WebGL.
+When a configuration feels good, use the **Save to file** / **Export** / **Import** buttons (top of the right panel). All three carry the same values: scoring, impact radii, QOL penalty/cap, bus stop spacing, session length, starting budget, inactivity timeout, the QOL pass bands, per-building scores, and the halo multipliers (master + per-size).
+
+- **Save to file** - writes `StreamingAssets/game_config.json` (+ a `.bak`). Editor and desktop builds only; not available on web.
+- **Export** - downloads the current config as a `game_config.json` file. Use this on **web** (and anywhere you want a shareable copy).
+- **Import** - loads a config from a `.json` file you pick and applies it live. The same JSON works everywhere, so a config exported on the web opens in the editor and vice-versa.
 
 ## Left panel - Building Picker
 - Filter box + a list of every building (name, id, price, halo size, stop radius).
@@ -31,8 +35,9 @@ When a configuration feels good, click **Save config to file** (top of the right
 ### Building reach (impact radius)
 - **Impact Radius Small / Medium / Large** - how far each building size searches for bus stops to score through.
 
-### Building halo (by size)
-- **Halo - Small / Medium / Large** - halo multiplier per building size: marker size, connection reach, and footprint. Applies to ALL buildings of that size, including already-placed ones. "Reset halos" (left panel) returns all three to 1x.
+### Building halo
+- **Halo - Master (all)** - global multiplier applied on top of the per-size values; scales every building's halo at once.
+- **Halo - Small / Medium / Large** - per-size halo multiplier: marker size, connection reach, and footprint. Applies to ALL buildings of that size, including already-placed ones. "Reset halos" (left panel) returns master and all three to 1x.
 
 ### Selected building
 - **Environment / Economy / Health & Safety / Culture & Edu** - the picked building's contribution to each QOL pillar. Raising these makes the completion score easier to hit.

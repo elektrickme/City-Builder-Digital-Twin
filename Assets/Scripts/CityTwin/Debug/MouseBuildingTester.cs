@@ -71,6 +71,7 @@ public class MouseBuildingTester : MonoBehaviour
     private bool _advancedOpen;
     private string _lastSaveMessage;
     private bool _lastSaveOk = true;
+    private bool _awaitingImport;
 
     private void Awake()
     {
@@ -89,6 +90,16 @@ public class MouseBuildingTester : MonoBehaviour
 
     private void Update()
     {
+        // Drain a pending config import (async on WebGL: user is picking a file).
+        if (_awaitingImport && ConfigFileIO.TryTakeImport(out string importedJson))
+        {
+            _awaitingImport = false;
+            _lastSaveOk = coordinator != null && coordinator.ImportConfigDebug(importedJson);
+            _lastSaveMessage = _lastSaveOk
+                ? $"Imported config  ({System.DateTime.Now:HH:mm:ss})"
+                : "Import failed (bad JSON?) - see console.";
+        }
+
         var keyboard = Keyboard.current;
         var mouse = Mouse.current;
         if (keyboard == null || mouse == null) return;
@@ -483,11 +494,17 @@ public class MouseBuildingTester : MonoBehaviour
                 "Stop-search radius for large buildings.",
                 simulationEngine.ImpactRadiusLarge, 1f, 400f, v => simulationEngine.ImpactRadiusLarge = v);
 
-            // Building halo (by size) - applies to all buildings of that size, placed or future.
+            // Building halo - master x per-size; applies to all buildings, placed or future.
             if (buildingSpawner != null)
             {
-                DrawSectionHeader("Building halo (by size)",
-                    "Halo multiplier per building size. Affects marker size, connection reach, and footprint for ALL buildings of that size, including already-placed ones.");
+                DrawSectionHeader("Building halo",
+                    "Master scales every halo; the per-size rows fine-tune each size. Affects marker size, connection reach, and footprint for ALL buildings, including already-placed ones.");
+                DrawSlider("Halo - Master (all)",
+                    "Global halo multiplier applied on top of the per-size values.",
+                    buildingSpawner.GetDebugHaloMasterScale(),
+                    BuildingSpawner.DebugHaloMultiplierMin,
+                    BuildingSpawner.DebugHaloMultiplierMax,
+                    v => { buildingSpawner.SetDebugHaloMasterScale(v); simulationEngine?.RefreshAllTileConnections(); });
                 DrawHaloSizeSlider("Halo - Small", BuildingSpawner.HaloSizeSmall);
                 DrawHaloSizeSlider("Halo - Medium", BuildingSpawner.HaloSizeMedium);
                 DrawHaloSizeSlider("Halo - Large", BuildingSpawner.HaloSizeLarge);
@@ -754,12 +771,30 @@ public class MouseBuildingTester : MonoBehaviour
     {
         GUILayout.BeginVertical(GUI.skin.box);
         GUILayout.BeginHorizontal();
-        if (GUILayout.Button("Save config to file", GUILayout.Height(26f), GUILayout.Width(160f)))
+        if (GUILayout.Button("Save to file", GUILayout.Height(26f), GUILayout.Width(96f)))
         {
             _lastSaveOk = coordinator != null && coordinator.SaveConfigDebug();
             _lastSaveMessage = _lastSaveOk
                 ? $"Saved to game_config.json  ({System.DateTime.Now:HH:mm:ss})"
-                : (coordinator == null ? "No coordinator found - cannot save." : "Save failed - see console.");
+                : (coordinator == null ? "No coordinator found - cannot save." : "Save failed (on web use Export) - see console.");
+        }
+        if (GUILayout.Button("Export", GUILayout.Height(26f), GUILayout.Width(80f)))
+        {
+            string json = coordinator != null ? coordinator.ExportConfigDebug() : null;
+            if (!string.IsNullOrEmpty(json))
+            {
+                ConfigFileIO.Export("game_config.json", json);
+                _lastSaveOk = true;
+                _lastSaveMessage = $"Exported game_config.json  ({System.DateTime.Now:HH:mm:ss})";
+            }
+            else { _lastSaveOk = false; _lastSaveMessage = "Export failed - no config loaded."; }
+        }
+        if (GUILayout.Button("Import", GUILayout.Height(26f), GUILayout.Width(80f)))
+        {
+            ConfigFileIO.BeginImport();
+            _awaitingImport = true;
+            _lastSaveOk = true;
+            _lastSaveMessage = "Import: choose a JSON file...";
         }
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
@@ -768,7 +803,7 @@ public class MouseBuildingTester : MonoBehaviour
         if (string.IsNullOrEmpty(_lastSaveMessage))
         {
             msgStyle.normal.textColor = new Color(0.7f, 0.7f, 0.7f);
-            GUILayout.Label("Writes current tweaks (including building halos) to StreamingAssets/game_config.json (keeps a .bak).", msgStyle);
+            GUILayout.Label("Save writes StreamingAssets/game_config.json (Editor/desktop). Export/Import download/upload a JSON file - use these on web.", msgStyle);
         }
         else
         {

@@ -35,6 +35,7 @@ namespace CityTwin.UI
         // Halo multiplier is keyed by building size (Small/Medium/Large), shared across all buildings of that size.
         private readonly Dictionary<string, float> _debugHaloScaleBySize = new Dictionary<string, float>(System.StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _sizeByBuildingId = new Dictionary<string, string>();
+        private float _debugHaloMasterScale = 1f;
         public const string HaloSizeSmall = "Small";
         public const string HaloSizeMedium = "Medium";
         public const string HaloSizeLarge = "Large";
@@ -231,19 +232,31 @@ namespace CityTwin.UI
             return radius > 0.001f;
         }
 
-        /// <summary>Halo multiplier for a building, resolved from its size bucket.</summary>
+        /// <summary>Effective halo multiplier for a building: master x per-size, clamped so the visual
+        /// marker and the scoring reach stay consistent.</summary>
         public float GetDebugHaloScale(string buildingId)
         {
-            if (string.IsNullOrEmpty(buildingId)) return DebugHaloMultiplierDefault;
+            if (string.IsNullOrEmpty(buildingId))
+                return Mathf.Clamp(_debugHaloMasterScale, DebugHaloMultiplierMin, DebugHaloMultiplierMax);
             string size = _sizeByBuildingId.TryGetValue(buildingId, out var s) ? s : null;
-            return GetDebugHaloScaleForSize(size);
+            return Mathf.Clamp(GetDebugHaloScaleForSize(size) * _debugHaloMasterScale, DebugHaloMultiplierMin, DebugHaloMultiplierMax);
         }
 
-        /// <summary>Halo multiplier for a building size ("Small"/"Medium"/"Large").</summary>
+        /// <summary>Per-size halo multiplier ("Small"/"Medium"/"Large"), before the master multiplier.</summary>
         public float GetDebugHaloScaleForSize(string size)
         {
             if (!string.IsNullOrEmpty(size) && _debugHaloScaleBySize.TryGetValue(size, out float v)) return v;
             return DebugHaloMultiplierDefault;
+        }
+
+        /// <summary>Master halo multiplier applied on top of every per-size value.</summary>
+        public float GetDebugHaloMasterScale() => _debugHaloMasterScale;
+
+        /// <summary>Set the master halo multiplier and apply it to every placed marker.</summary>
+        public void SetDebugHaloMasterScale(float multiplier)
+        {
+            _debugHaloMasterScale = Mathf.Clamp(multiplier, DebugHaloMultiplierMin, DebugHaloMultiplierMax);
+            ApplyDebugHaloScaleToSpawnedMarkers();
         }
 
         /// <summary>Set the halo multiplier for a building size and apply it to every placed marker of that size.</summary>
@@ -256,7 +269,7 @@ namespace CityTwin.UI
 
         /// <summary>Build the building-id -> size map from the catalog and seed the per-size halo multipliers
         /// (from persisted config). Call after the catalog/config is applied.</summary>
-        public void InitDebugHaloScales(IEnumerable<BuildingDefinition> buildings, float small, float medium, float large)
+        public void InitDebugHaloScales(IEnumerable<BuildingDefinition> buildings, float master, float small, float medium, float large)
         {
             _sizeByBuildingId.Clear();
             if (buildings != null)
@@ -264,6 +277,7 @@ namespace CityTwin.UI
                     if (b != null && !string.IsNullOrEmpty(b.Id))
                         _sizeByBuildingId[b.Id] = string.IsNullOrEmpty(b.ImpactSize) ? HaloSizeSmall : b.ImpactSize;
 
+            _debugHaloMasterScale = Mathf.Clamp(master > 0f ? master : DebugHaloMultiplierDefault, DebugHaloMultiplierMin, DebugHaloMultiplierMax);
             _debugHaloScaleBySize[HaloSizeSmall] = Mathf.Clamp(small > 0f ? small : DebugHaloMultiplierDefault, DebugHaloMultiplierMin, DebugHaloMultiplierMax);
             _debugHaloScaleBySize[HaloSizeMedium] = Mathf.Clamp(medium > 0f ? medium : DebugHaloMultiplierDefault, DebugHaloMultiplierMin, DebugHaloMultiplierMax);
             _debugHaloScaleBySize[HaloSizeLarge] = Mathf.Clamp(large > 0f ? large : DebugHaloMultiplierDefault, DebugHaloMultiplierMin, DebugHaloMultiplierMax);
@@ -273,6 +287,7 @@ namespace CityTwin.UI
         /// <summary>Reset all per-size halo multipliers to default and apply to placed markers.</summary>
         public void ClearDebugHaloScales()
         {
+            _debugHaloMasterScale = DebugHaloMultiplierDefault;
             _debugHaloScaleBySize[HaloSizeSmall] = DebugHaloMultiplierDefault;
             _debugHaloScaleBySize[HaloSizeMedium] = DebugHaloMultiplierDefault;
             _debugHaloScaleBySize[HaloSizeLarge] = DebugHaloMultiplierDefault;

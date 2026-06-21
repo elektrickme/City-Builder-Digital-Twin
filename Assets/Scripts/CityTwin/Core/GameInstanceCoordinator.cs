@@ -130,6 +130,7 @@ namespace CityTwin.Core
             Budget = cfg.Budget?.startingBudget ?? 1000;
             simulationEngine?.SetBuildingCatalog(new List<BuildingDefinition>(cfg.Buildings ?? System.Array.Empty<BuildingDefinition>()));
             buildingSpawner?.InitDebugHaloScales(cfg.Buildings,
+                cfg.Scoring != null ? cfg.Scoring.haloMultiplierMaster : 1f,
                 cfg.Scoring != null ? cfg.Scoring.haloMultiplierSmall : 1f,
                 cfg.Scoring != null ? cfg.Scoring.haloMultiplierMedium : 1f,
                 cfg.Scoring != null ? cfg.Scoring.haloMultiplierLarge : 1f);
@@ -280,20 +281,41 @@ namespace CityTwin.Core
                 return false;
             }
 
+            SyncLiveToConfig();
+            return configLoader.SaveToFile();
+        }
+
+        /// <summary>Debug/playtest: export the current (live-synced) config as a JSON string for download.</summary>
+        public string ExportConfigDebug()
+        {
+            if (configLoader == null || configLoader.Config == null) return null;
+            SyncLiveToConfig();
+            return configLoader.ExportToJson();
+        }
+
+        /// <summary>Debug/playtest: import a config JSON string and apply it live (rebuilds via OnConfigLoaded).</summary>
+        public bool ImportConfigDebug(string json)
+        {
+            return configLoader != null && configLoader.ImportFromJson(json);
+        }
+
+        /// <summary>Copy live tweaks (engine scoring/accessibility, session length, inactivity timeout, halo
+        /// multipliers) into the loaded config in place. Starting budget, stop spacing, end-message bands and
+        /// building scores are already edited into the config directly elsewhere.</summary>
+        private void SyncLiveToConfig()
+        {
+            var cfg = configLoader != null ? configLoader.Config : null;
+            if (cfg == null) return;
             simulationEngine?.WriteTunablesToConfig(cfg.Scoring, cfg.Accessibility);
             if (cfg.Session != null && sessionTimer != null) cfg.Session.gameplaySeconds = sessionTimer.GameplaySeconds;
             if (cfg.Inactivity != null && inactivityPopup != null) cfg.Inactivity.timeoutSeconds = inactivityPopup.TimeoutSeconds;
-            // Starting budget is edited directly via SetStartingBudgetDebug, so it is already in cfg.Budget.
-
-            // Persist per-size halo multipliers from the spawner into the scoring config.
             if (buildingSpawner != null && cfg.Scoring != null)
             {
+                cfg.Scoring.haloMultiplierMaster = buildingSpawner.GetDebugHaloMasterScale();
                 cfg.Scoring.haloMultiplierSmall = buildingSpawner.GetDebugHaloScaleForSize(BuildingSpawner.HaloSizeSmall);
                 cfg.Scoring.haloMultiplierMedium = buildingSpawner.GetDebugHaloScaleForSize(BuildingSpawner.HaloSizeMedium);
                 cfg.Scoring.haloMultiplierLarge = buildingSpawner.GetDebugHaloScaleForSize(BuildingSpawner.HaloSizeLarge);
             }
-
-            return configLoader.SaveToFile();
         }
 
         private void ApplyRegistryHubsToSimulation()

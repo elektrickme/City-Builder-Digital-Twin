@@ -288,30 +288,57 @@ namespace CityTwin.Config
             return list.ToArray();
         }
 
-        /// <summary>Serialize the current in-memory config back to the StreamingAssets JSON file.
-        /// Preserves the original "localization" block verbatim (JsonUtility cannot round-trip nested dictionaries).
-        /// Keeps a .bak of the previous file. Not supported on WebGL (read-only StreamingAssets). Returns true on success.</summary>
+        /// <summary>Serialize the current in-memory config to a JSON string (cross-platform).
+        /// Localization is re-serialized from the parsed dictionary because JsonUtility cannot round-trip
+        /// nested dictionaries. Returns null if no config is loaded.</summary>
+        public string ExportToJson()
+        {
+            if (_cachedConfig == null)
+            {
+                Debug.LogWarning("[GameConfigLoader] ExportToJson: no config loaded.");
+                return null;
+            }
+            var root = BuildRoot(_cachedConfig);
+            string json = JsonUtility.ToJson(root, true);
+            string loc = SerializeLocalization(_cachedConfig.Localization);
+            if (!string.IsNullOrEmpty(loc))
+                json = InsertLocalizationBeforeFinalBrace(json, loc);
+            return json;
+        }
+
+        /// <summary>Parse a config JSON string and make it the active config, firing OnConfigLoaded so
+        /// listeners re-apply it - the same path a file/web load takes. Returns false on parse failure
+        /// (the current config is left untouched).</summary>
+        public bool ImportFromJson(string json)
+        {
+            if (string.IsNullOrEmpty(json))
+            {
+                Debug.LogWarning("[GameConfigLoader] ImportFromJson: empty input.");
+                return false;
+            }
+            if (!TryParse(json, out var parsed))
+            {
+                Debug.LogWarning("[GameConfigLoader] ImportFromJson: parse failed; keeping current config.");
+                return false;
+            }
+            _cachedConfig = parsed;
+            OnConfigLoaded?.Invoke(_cachedConfig);
+            return true;
+        }
+
+        /// <summary>Write the current config to the StreamingAssets JSON file (Editor/standalone only;
+        /// WebGL has no writable filesystem - use Export there). Keeps a .bak of the previous file.</summary>
         public bool SaveToFile()
         {
 #if UNITY_WEBGL && !UNITY_EDITOR
-            Debug.LogWarning("[GameConfigLoader] SaveToFile is not supported on WebGL (read-only StreamingAssets).");
+            Debug.LogWarning("[GameConfigLoader] SaveToFile is not supported on WebGL - use Export instead.");
             return false;
 #else
-            if (_cachedConfig == null)
-            {
-                Debug.LogWarning("[GameConfigLoader] SaveToFile: no config loaded.");
-                return false;
-            }
+            string json = ExportToJson();
+            if (string.IsNullOrEmpty(json)) return false;
             try
             {
                 string path = Path.Combine(Application.streamingAssetsPath, configPath);
-                string existingLoc = File.Exists(path) ? ExtractLocalizationVerbatim(File.ReadAllText(path)) : null;
-
-                var root = BuildRoot(_cachedConfig);
-                string json = JsonUtility.ToJson(root, true);
-                if (!string.IsNullOrEmpty(existingLoc))
-                    json = InsertLocalizationBeforeFinalBrace(json, existingLoc);
-
                 if (File.Exists(path))
                     File.Copy(path, path + ".bak", true);
                 File.WriteAllText(path, json);
@@ -378,22 +405,39 @@ namespace CityTwin.Config
             return arr;
         }
 
-        /// <summary>Extract the original "localization": { ... } text (including the key) so it can be re-inserted verbatim.</summary>
-        private static string ExtractLocalizationVerbatim(string json)
+        /// <summary>Serialize the localization dictionary to a "localization": { lang: { key: value } } block.
+        /// JsonUtility cannot round-trip nested dictionaries, so this is hand-rolled with JSON string escaping.</summary>
+        private static string SerializeLocalization(Dictionary<string, Dictionary<string, string>> loc)
         {
-            int start = json.IndexOf("\"localization\"", StringComparison.OrdinalIgnoreCase);
-            if (start < 0) return null;
-            int braceStart = json.IndexOf('{', start);
-            if (braceStart < 0) return null;
-            int depth = 1;
-            int i = braceStart + 1;
-            while (i < json.Length && depth > 0)
+            if (loc == null || loc.Count == 0) return null;
+            var sb = new System.Text.StringBuilder();
+            sb.Append("\"localization\": {");
+            bool firstLang = true;
+            foreach (var lang in loc)
             {
-                if (json[i] == '{') depth++;
-                else if (json[i] == '}') depth--;
-                i++;
+                if (!firstLang) sb.Append(',');
+                firstLang = false;
+                sb.Append("\n    \"").Append(EscapeJson(lang.Key)).Append("\": {");
+                bool firstKey = true;
+                if (lang.Value != null)
+                {
+                    foreach (var kv in lang.Value)
+                    {
+                        if (!firstKey) sb.Append(',');
+                        firstKey = false;
+                        sb.Append("\n      \"").Append(EscapeJson(kv.Key)).Append("\": \"").Append(EscapeJson(kv.Value)).Append('"');
+                    }
+                }
+                sb.Append("\n    }");
             }
-            return json.Substring(start, i - start);
+            sb.Append("\n  }");
+            return sb.ToString();
+        }
+
+        private static string EscapeJson(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r").Replace("\t", "\\t");
         }
 
         /// <summary>Insert a raw "localization": {...} block just before the closing brace of a serialized object.</summary>
