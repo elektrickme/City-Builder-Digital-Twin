@@ -49,7 +49,7 @@
             {
                 "id": "Q1",
                 "listenPort": 3333,
-                "expectedSenderIp": "127.0.0.1"
+                "expectedSenderIp": "27.0.0.1"
             },
             {
                 "id": "Q2",
@@ -179,7 +179,7 @@
             },
             "connectionRadius": 600.0,
             "localizationKey": "building.police_station.name",
-            "haloMultiplier": 1.331318736076355
+            "haloMultiplier": 0.9841201901435852
         },
         {
             "id": "fire_station",

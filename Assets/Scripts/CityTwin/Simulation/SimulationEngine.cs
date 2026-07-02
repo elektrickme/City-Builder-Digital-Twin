@@ -375,6 +375,17 @@ namespace CityTwin.Simulation
         /// <summary>Number of currently placed tiles on this instance's play field.</summary>
         public int PlacedTileCount => _placedTiles.Count;
 
+        /// <summary>Total population of scoring hubs whose current QOL exceeds the threshold ("citizens reached").
+        /// Hub metrics are index-aligned with the scoring hubs, so this sums population where the matching hub QOL qualifies.</summary>
+        public float ReachedPopulation(float qolThreshold = 0f)
+        {
+            float total = 0f;
+            int n = Mathf.Min(_hubMetrics.Count, _scoringHubs.Count);
+            for (int i = 0; i < n; i++)
+                if (_hubMetrics[i].Qol > qolThreshold) total += _scoringHubs[i].population;
+            return total;
+        }
+
         /// <summary>True if the tile is placed on an obstacle (e.g. water) and does not affect QOL. Use for UI feedback.</summary>
         public bool IsTileInactive(string tileId)
         {

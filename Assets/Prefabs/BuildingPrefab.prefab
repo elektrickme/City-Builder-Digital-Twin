@@ -116,14 +116,14 @@ RectTransform:
   m_GameObject: {fileID: 2842420288842389817}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1.474873, y: 1.474873, z: 1.474873}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 2108818334385160783}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: 206}
+  m_AnchoredPosition: {x: 0, y: 229}
   m_SizeDelta: {x: 330.64, y: 100}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!222 &368559930734865222
@@ -177,7 +177,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CityTwin.UI.LocalizedLabel
   localization: {fileID: 0}
-  localizationKey: 
+  localizationKey: ui.budgetDepleted
   targetTmp: {fileID: 0}
 --- !u!1 &3322005266591496291
 GameObject:
@@ -406,6 +406,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 2108818334385160783}
+  - component: {fileID: 2820251302215491713}
   m_Layer: 0
   m_Name: Budget Exceeded
   m_TagString: Untagged
@@ -434,3 +435,26 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 100, y: 100}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!223 &2820251302215491713
+Canvas:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7931842764024840002}
+  m_Enabled: 1
+  serializedVersion: 3
+  m_RenderMode: 2
+  m_Camera: {fileID: 0}
+  m_PlaneDistance: 100
+  m_PixelPerfect: 0
+  m_ReceivesEvents: 1
+  m_OverrideSorting: 1
+  m_OverridePixelPerfect: 0
+  m_SortingBucketNormalizedSize: 0
+  m_VertexColorAlwaysGammaSpace: 0
+  m_AdditionalShaderChannelsFlag: 0
+  m_UpdateRectTransformForStandalone: 0
+  m_SortingLayerID: 0
+  m_SortingOrder: 5
+  m_TargetDisplay: 0

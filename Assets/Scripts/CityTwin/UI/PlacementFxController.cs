@@ -1,18 +1,16 @@
 using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
-using TMPro;
+using UnityEngine.Serialization;
 using CityTwin.Core;
 using CityTwin.Simulation;
 
 namespace CityTwin.UI
 {
     /// <summary>
-    /// Kid-friendly placement feedback: expanding radius disc on every spawn,
-    /// per-hub colored pillar delta floaters when hub metrics move, dashboard pillar bar pop.
-    /// Subscribes to BuildingSpawner.OnTileSpawned and SimulationEngine.OnMetricsChanged.
-    /// All visuals built at runtime — no prefab assets required.
+    /// Kid-friendly placement feedback: an expanding radius disc on every spawn and a dashboard pillar-bar pop
+    /// when city metrics move. Subscribes to BuildingSpawner.OnTileSpawned and SimulationEngine.OnMetricsChanged.
+    /// All visuals built at runtime; no prefab assets required.
     /// </summary>
     public class PlacementFxController : MonoBehaviour
     {
@@ -33,29 +31,18 @@ namespace CityTwin.UI
         [SerializeField] private Color rippleCulColor = new Color(0.62f, 0.45f, 1f, 1f);
         [SerializeField] private Color rippleDefaultColor = new Color(0.35f, 0.80f, 1f, 1f);
 
-        [Header("Floaters")]
-        [Tooltip("Minimum delta (pillar %) needed to spawn a floater above a hub.")]
-        [SerializeField] private float floaterThreshold = 1f;
-        [SerializeField] private float floaterDuration = 1.2f;
-        [SerializeField] private float floaterRiseDistance = 36f;
-        [SerializeField] private float floaterFontSize = 28f;
-        [SerializeField] private int maxFloatersPerHub = 6;
+        [Header("Pillar punch")]
+        [Tooltip("Minimum city-level pillar delta (%) needed to punch a dashboard bar after a placement.")]
+        [FormerlySerializedAs("floaterThreshold")]
+        [SerializeField] private float pillarPunchThreshold = 1f;
 
         private SnapshotFrame _previousFrame;   // metrics before the most recent OnMetricsChanged
         private SnapshotFrame _currentFrame;    // most recent snapshot
-        private readonly Dictionary<int, int> _activeFloaterCount = new Dictionary<int, int>();
         private static Sprite _ringSprite;
 
         private struct SnapshotFrame
         {
             public float[] Env, Eco, Saf, Cul;
-        }
-
-        private struct PillarColorPair
-        {
-            public DashboardController.Pillar Pillar;
-            public Color Color;
-            public string Tag;
         }
 
         private void Awake()
@@ -106,7 +93,7 @@ namespace CityTwin.UI
             // Coordinator order is AddTile → OnMetricsChanged → SpawnBuilding → OnTileSpawned.
             // So by the time we get here, _currentFrame already holds POST-placement metrics and
             // _previousFrame holds PRE-placement metrics. Diff against _previousFrame.
-            EmitHubFloatersAndPunches();
+            EmitPillarPunches();
         }
 
         private void HandleMetricsChanged()
@@ -116,90 +103,29 @@ namespace CityTwin.UI
             CaptureCurrentInto(ref _currentFrame);
         }
 
-        private void EmitHubFloatersAndPunches()
+        private void EmitPillarPunches()
         {
             var hubs = simulationEngine != null ? simulationEngine.HubMetrics : null;
-            var positions = simulationEngine != null ? simulationEngine.HubPositions : null;
-            if (hubs == null || positions == null || hubs.Count == 0) return;
+            if (hubs == null || hubs.Count == 0) return;
 
             float cityEnvDelta = 0, cityEcoDelta = 0, citySafDelta = 0, cityCulDelta = 0;
-
             for (int i = 0; i < hubs.Count; i++)
             {
                 var h = hubs[i];
-                float dEnv = h.Environment   - SafeGet(_previousFrame.Env, i);
-                float dEco = h.Economy       - SafeGet(_previousFrame.Eco, i);
-                float dSaf = h.HealthSafety  - SafeGet(_previousFrame.Saf, i);
-                float dCul = h.CultureEdu    - SafeGet(_previousFrame.Cul, i);
-
-                cityEnvDelta += dEnv;
-                cityEcoDelta += dEco;
-                citySafDelta += dSaf;
-                cityCulDelta += dCul;
-
-                Vector2 hubAnchored = i < positions.Count ? positions[i] : Vector2.zero;
-                TrySpawnFloater(hubAnchored, dEnv, new PillarColorPair { Pillar = DashboardController.Pillar.Environment,  Color = rippleEnvColor, Tag = "Env" }, i);
-                TrySpawnFloater(hubAnchored, dEco, new PillarColorPair { Pillar = DashboardController.Pillar.Economy,      Color = rippleEcoColor, Tag = "Eco" }, i);
-                TrySpawnFloater(hubAnchored, dSaf, new PillarColorPair { Pillar = DashboardController.Pillar.HealthSafety, Color = rippleSafColor, Tag = "Saf" }, i);
-                TrySpawnFloater(hubAnchored, dCul, new PillarColorPair { Pillar = DashboardController.Pillar.CultureEdu,   Color = rippleCulColor, Tag = "Cul" }, i);
+                cityEnvDelta += h.Environment  - SafeGet(_previousFrame.Env, i);
+                cityEcoDelta += h.Economy      - SafeGet(_previousFrame.Eco, i);
+                citySafDelta += h.HealthSafety - SafeGet(_previousFrame.Saf, i);
+                cityCulDelta += h.CultureEdu   - SafeGet(_previousFrame.Cul, i);
             }
 
             if (dashboard != null)
             {
-                if (Mathf.Abs(cityEnvDelta) >= floaterThreshold) dashboard.PunchPillar(DashboardController.Pillar.Environment);
-                if (Mathf.Abs(cityEcoDelta) >= floaterThreshold) dashboard.PunchPillar(DashboardController.Pillar.Economy);
-                if (Mathf.Abs(citySafDelta) >= floaterThreshold) dashboard.PunchPillar(DashboardController.Pillar.HealthSafety);
-                if (Mathf.Abs(cityCulDelta) >= floaterThreshold) dashboard.PunchPillar(DashboardController.Pillar.CultureEdu);
+                if (Mathf.Abs(cityEnvDelta) >= pillarPunchThreshold) dashboard.PunchPillar(DashboardController.Pillar.Environment);
+                if (Mathf.Abs(cityEcoDelta) >= pillarPunchThreshold) dashboard.PunchPillar(DashboardController.Pillar.Economy);
+                if (Mathf.Abs(citySafDelta) >= pillarPunchThreshold) dashboard.PunchPillar(DashboardController.Pillar.HealthSafety);
+                if (Mathf.Abs(cityCulDelta) >= pillarPunchThreshold) dashboard.PunchPillar(DashboardController.Pillar.CultureEdu);
                 dashboard.PunchPillar(DashboardController.Pillar.Qol, 0.12f, 0.45f);
             }
-        }
-
-        private void TrySpawnFloater(Vector2 anchoredHubPos, float delta, PillarColorPair pillar, int hubIndex)
-        {
-            if (Mathf.Abs(delta) < floaterThreshold) return;
-            int current = _activeFloaterCount.TryGetValue(hubIndex, out var c) ? c : 0;
-            if (current >= maxFloatersPerHub) return;
-            _activeFloaterCount[hubIndex] = current + 1;
-
-            var go = new GameObject($"Floater_Hub{hubIndex}_{pillar.Tag}", typeof(RectTransform));
-            var rt = (RectTransform)go.transform;
-            rt.SetParent(contentRoot, false);
-            rt.sizeDelta = new Vector2(120f, 40f);
-            // small horizontal jitter so simultaneous floaters don't stack
-            float jitterX = (((hubIndex * 73) + pillar.Tag.GetHashCode()) % 31) - 15f;
-            rt.anchoredPosition = anchoredHubPos + new Vector2(jitterX, 22f);
-
-            var tmp = go.AddComponent<TextMeshProUGUI>();
-            tmp.text = (delta > 0 ? "+" : "") + Mathf.RoundToInt(delta).ToString();
-            tmp.fontSize = floaterFontSize;
-            tmp.fontStyle = FontStyles.Bold;
-            tmp.alignment = TextAlignmentOptions.Center;
-            tmp.color = pillar.Color;
-            tmp.outlineWidth = 0.2f;
-            tmp.outlineColor = new Color(0f, 0f, 0f, 0.6f);
-            tmp.raycastTarget = false;
-
-            StartCoroutine(FloaterRoutine(rt, tmp, hubIndex));
-        }
-
-        private IEnumerator FloaterRoutine(RectTransform rt, TextMeshProUGUI tmp, int hubIndex)
-        {
-            Vector2 startPos = rt.anchoredPosition;
-            Color baseColor = tmp.color;
-            float t = 0f;
-            while (t < floaterDuration && rt != null)
-            {
-                t += Time.unscaledDeltaTime;
-                float u = Mathf.Clamp01(t / floaterDuration);
-                rt.anchoredPosition = startPos + new Vector2(0f, floaterRiseDistance * u);
-                float ease = 1f - Mathf.Pow(u, 2f);
-                rt.localScale = Vector3.one * Mathf.Lerp(1.4f, 1f, Mathf.Clamp01(u * 2.5f));
-                tmp.color = new Color(baseColor.r, baseColor.g, baseColor.b, baseColor.a * ease);
-                yield return null;
-            }
-            if (_activeFloaterCount.TryGetValue(hubIndex, out var c))
-                _activeFloaterCount[hubIndex] = Mathf.Max(0, c - 1);
-            if (rt != null) Destroy(rt.gameObject);
         }
 
         private void SpawnRipple(Vector2 anchoredCenter, float radius, Color color)

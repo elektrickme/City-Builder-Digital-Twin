@@ -1,5 +1,6 @@
 using UnityEngine;
 using TMPro;
+using DG.Tweening;
 
 namespace CityTwin.UI
 {
@@ -24,6 +25,20 @@ namespace CityTwin.UI
         [Tooltip("Text shown during the restart flow (remove-tiles prompt, then countdown).")]
         [SerializeField] private TextMeshProUGUI restartStatusText;
 
+        [Header("Restart Status Pulse")]
+        [Tooltip("Gently pulse the restart status line while it shows a message (e.g. the clear-tiles prompt).")]
+        [SerializeField] private bool pulseRestartStatus = true;
+        [Tooltip("Peak scale of the pulse relative to the resting scale.")]
+        [SerializeField] private float pulseScaleAmount = 1.06f;
+        [Tooltip("Seconds for one half of the pulse (grow or shrink). Full breath = twice this.")]
+        [SerializeField] private float pulseHalfPeriodSeconds = 0.6f;
+
+        [Header("End Report Cards")]
+        [Tooltip("Body text of the Balance card (feedback.* localization). Set by TutorialSequenceController.")]
+        [SerializeField] private TextMeshProUGUI balanceBodyText;
+        [Tooltip("Body text of the Strategic card (reaction.*.access.v2 localization). Set by TutorialSequenceController.")]
+        [SerializeField] private TextMeshProUGUI strategicBodyText;
+
         public bool IsVisible => endPanel != null && endPanel.activeSelf;
 
         /// <summary>Activate the overlay and fill in the final title/body text. Clears any prior restart status.</summary>
@@ -46,10 +61,57 @@ namespace CityTwin.UI
             SetRestartStatus(string.Empty);
         }
 
-        /// <summary>Update the restart status line (e.g. "Please remove all tiles" / "Restarting in 3...").</summary>
+        /// <summary>Update the restart status line (e.g. "Please remove all tiles" / "Restarting in 3...").
+        /// Pulses while non-empty; text changes mid-pulse do not restart the loop.</summary>
         public void SetRestartStatus(string message)
         {
-            if (restartStatusText != null) restartStatusText.text = message ?? string.Empty;
+            if (restartStatusText == null) return;
+            restartStatusText.text = message ?? string.Empty;
+            if (!string.IsNullOrEmpty(message) && pulseRestartStatus) StartStatusPulse();
+            else StopStatusPulse();
+        }
+
+        private Tween _statusPulse;
+        private Vector3 _statusBaseScale = Vector3.one;
+        private bool _statusBaseScaleCaptured;
+
+        private void StartStatusPulse()
+        {
+            if (_statusPulse != null && _statusPulse.IsActive()) return;   // already breathing
+
+            Transform t = restartStatusText.transform;
+            // Capture the resting scale once, before any pulse, so repeated prompts never compound.
+            if (!_statusBaseScaleCaptured)
+            {
+                _statusBaseScale = t.localScale;
+                _statusBaseScaleCaptured = true;
+            }
+            t.localScale = _statusBaseScale;
+            _statusPulse = t.DOScale(_statusBaseScale * pulseScaleAmount, pulseHalfPeriodSeconds)
+                .SetEase(Ease.InOutSine)
+                .SetLoops(-1, LoopType.Yoyo)
+                .SetUpdate(true)
+                .SetTarget(t);
+        }
+
+        private void StopStatusPulse()
+        {
+            if (_statusPulse != null) { _statusPulse.Kill(); _statusPulse = null; }
+            if (restartStatusText != null && _statusBaseScaleCaptured)
+                restartStatusText.transform.localScale = _statusBaseScale;
+        }
+
+        private void OnDisable()
+        {
+            StopStatusPulse();
+        }
+
+        /// <summary>Fill the end-report card bodies (Balance, Strategic). QOL is rendered by <see cref="Show"/>;
+        /// this only populates the cards, so call order with Show does not matter. Card titles are static UI.</summary>
+        public void SetReport(string balanceBody, string strategicBody)
+        {
+            if (balanceBodyText != null) balanceBodyText.text = balanceBody ?? string.Empty;
+            if (strategicBodyText != null) strategicBodyText.text = strategicBody ?? string.Empty;
         }
     }
 }

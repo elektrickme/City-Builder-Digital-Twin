@@ -19,6 +19,8 @@ namespace CityTwin.UI
         [Header("UI")]
         [SerializeField] private TextMeshProUGUI statusBarText;
         [SerializeField] private EndScreenController endScreen;
+        [Tooltip("Localization key the status bar switches to when the session ends (end-screen header).")]
+        [SerializeField] private string endHeaderKey = "report.title";
 
         private int _introKeyIndex;
         private float _nextIntroTime;
@@ -79,6 +81,10 @@ namespace CityTwin.UI
 
         private void OnTimerEnded()
         {
+            // Flip the status bar from the gameplay label (ui.timer) to the end-screen header.
+            if (statusBarText != null && localization != null && !string.IsNullOrEmpty(endHeaderKey))
+                statusBarText.text = localization.GetString(endHeaderKey);
+
             int qol = simulationEngine != null ? Mathf.RoundToInt(simulationEngine.Qol) : 0;
             var cfg = configLoader?.Config?.EndMessages;
             string title = string.Empty;
