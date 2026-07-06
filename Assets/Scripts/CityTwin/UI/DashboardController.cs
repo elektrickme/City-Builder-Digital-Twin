@@ -37,6 +37,14 @@ public class DashboardController : MonoBehaviour
     [Tooltip("Smooth metric bar changes (0 = instant).")]
     [SerializeField] private float metricSmoothTime = 0.3f;
 
+    [Header("HDR glow (bloom)")]
+    [Tooltip("Give every top-bar text and icon a UIGlow handle so tutorial highlights can bloom them (values > 1 glow).")]
+    [SerializeField] private bool glowTopBar = true;
+    [Tooltip("Resting HDR multiplier for top-bar texts and icons. 1 = no glow at rest; the tutorial highlight pulses still sweep well above 1.")]
+    [Range(1f, 6f)] [SerializeField] private float topBarGlowBoost = 1f;
+    [Tooltip("Scale the highlighted element reaches at the top of a tutorial flash (1.15 = +15%). 1 = no scaling.")]
+    [Range(1f, 1.5f)] [SerializeField] private float highlightScalePeak = 1.15f;
+
     private float _displayQol;
     public float DisplayQol => _displayQol;
 
@@ -73,20 +81,43 @@ public class DashboardController : MonoBehaviour
         if (coordinator == null) coordinator = GetComponentInChildren<GameInstanceCoordinator>(true);
     }
 
+    private void Start()
+    {
+        if (glowTopBar) ApplyTopBarGlow();
+    }
+
+    /// <summary>Give every top-bar text and icon a UIGlow so the whole readout strip blooms.
+    /// The top bar is located from the referenced readouts (readout → group → Top Bar UI), so no
+    /// extra scene wiring is needed. Fill bars and SVGs are skipped: bars glow through their own
+    /// shader, and SVG images have generated materials a swap would break.</summary>
+    private void ApplyTopBarGlow()
+    {
+        Transform readout = budgetText != null ? budgetText.transform
+                          : timerText != null ? timerText.transform
+                          : qolText != null ? qolText.transform : null;
+        if (readout == null || readout.parent == null || readout.parent.parent == null) return;
+        Transform topBar = readout.parent.parent;
+
+        foreach (var g in topBar.GetComponentsInChildren<Graphic>(true))
+        {
+            if (g is RawImage) continue;                    // fill bars already glow via their own shader
+            if (g.GetType().Name.Contains("SVG")) continue; // vector graphics own their material setup
+            if (g.GetComponent<UIGlow>() != null) continue;
+            var glow = g.gameObject.AddComponent<UIGlow>();
+            glow.glowBoost = topBarGlowBoost;
+        }
+    }
+
     private void OnEnable()
     {
         // Ensure dashboard starts from empty values before any metrics arrive.
+        // Update() drives RefreshMetrics every frame, so no OnMetricsChanged subscription:
+        // a second call on edit frames would double-step the smoothing and make bars stutter.
         ResetMetricUI();
-
-        if (simulationEngine != null)
-            simulationEngine.OnMetricsChanged += RefreshMetrics;
     }
 
     private void OnDisable()
     {
-        if (simulationEngine != null)
-            simulationEngine.OnMetricsChanged -= RefreshMetrics;
-
         // Stop any in-flight pulses and restore resting scale so a disabled/destroyed bar
         // doesn't keep a tween alive or freeze at an inflated scale.
         foreach (var kv in _pillarBaseScales)
@@ -159,25 +190,283 @@ public class DashboardController : MonoBehaviour
             .SetTarget(target);
     }
 
+    // ---- tutorial highlights ----
+
+    /// <summary>Draw the eye to a pillar: an HDR glow pulse on its bar/badge (bloom post pass picks
+    /// it up). No scale animation — geometry stays inside its layout, only brightness moves.</summary>
+    public void HighlightPillar(Pillar pillar, float seconds = 1f)
+    {
+        Transform target = PillarTransform(pillar);
+        if (target == null) return;
+        FlashGraphics(target, seconds);
+        ScalePulse(target, seconds);
+        var label = pillar switch
+        {
+            Pillar.Environment => environmentText,
+            Pillar.Economy => economyText,
+            Pillar.HealthSafety => healthSafetyText,
+            Pillar.CultureEdu => cultureEduText,
+            Pillar.Qol => qolText,
+            _ => null
+        };
+        if (label != null)
+        {
+            FlashGraphics(label.transform, seconds);
+            ScalePulse(label.transform, seconds);
+        }
+    }
+
+    /// <summary>Brief white flash on the session timer readout.</summary>
+    public void HighlightTimer(float seconds = 1f)
+    {
+        if (timerText == null) return;
+        FlashGraphics(timerText.transform, seconds);
+        ScalePulse(timerText.transform, seconds);
+    }
+
+    /// <summary>Brief white flash on the budget readout.</summary>
+    public void HighlightBudget(float seconds = 1f)
+    {
+        if (budgetText == null) return;
+        FlashGraphics(budgetText.transform, seconds);
+        ScalePulse(budgetText.transform, seconds);
+    }
+
+    /// <summary>Size punch riding a highlight flash: up to highlightScalePeak and back over the
+    /// flash duration. Base scales are cached (same map as PunchPillar) so repeats never compound.</summary>
+    private void ScalePulse(Transform target, float seconds)
+    {
+        if (target == null || highlightScalePeak <= 1.001f || !isActiveAndEnabled) return;
+
+        if (!_pillarBaseScales.TryGetValue(target, out Vector3 baseScale))
+        {
+            baseScale = target.localScale;
+            _pillarBaseScales[target] = baseScale;
+        }
+
+        target.DOKill(false);
+        target.localScale = baseScale;
+        float rise = Mathf.Max(0.2f, seconds * 0.35f);
+        float fall = Mathf.Max(0.3f, seconds * 0.65f);
+        DOTween.Sequence().SetTarget(target).SetUpdate(true)
+            .Append(target.DOScale(baseScale * highlightScalePeak, rise).SetEase(Ease.OutQuad))
+            .Append(target.DOScale(baseScale, fall).SetEase(Ease.InOutSine))
+            .OnKill(() => { if (target != null) target.localScale = baseScale; });
+    }
+
+    /// <summary>Tutorial demo: sweep the QOL badge to 99 and back, then hand display back to the live
+    /// value. 99 not 100 — the badge layout breaks with three digits at full fill.</summary>
+    public void PlayQolMaxDemo(float seconds = 3f)
+    {
+        if (_qolDemoRoutine != null) StopCoroutine(_qolDemoRoutine);
+        _qolDemoRoutine = StartCoroutine(QolDemoRoutine(Mathf.Max(1f, seconds)));
+    }
+
+    private Coroutine _qolDemoRoutine;
+    private bool _qolDemoActive;
+    private float _qolDemoValue;
+
+    // Per-pillar demo sweeps (tutorial): bar animates to full and back, then live values resume.
+    private readonly bool[] _pillarDemo = new bool[4];
+    private readonly float[] _pillarDemoValue = new float[4];
+    private readonly Coroutine[] _pillarDemoRoutines = new Coroutine[4];
+
+    /// <summary>Tutorial demo: sweep one category bar to full and back (Qol routes to the badge demo).</summary>
+    public void PlayPillarMaxDemo(Pillar pillar, float seconds = 1.2f)
+    {
+        if (pillar == Pillar.Qol) { PlayQolMaxDemo(seconds); return; }
+        int idx = (int)pillar;
+        if (idx < 0 || idx > 3) return;
+        if (_pillarDemoRoutines[idx] != null) StopCoroutine(_pillarDemoRoutines[idx]);
+        _pillarDemoRoutines[idx] = StartCoroutine(PillarDemoRoutine(idx, Mathf.Max(0.4f, seconds)));
+    }
+
+    private System.Collections.IEnumerator PillarDemoRoutine(int idx, float seconds)
+    {
+        _pillarDemo[idx] = true;
+        float baseVal = idx switch { 0 => _displayEnv, 1 => _displayEco, 2 => _displaySaf, _ => _displayCul };
+        float up = seconds * 0.4f, hold = seconds * 0.2f, down = seconds * 0.4f;
+        for (float t = 0f; t < up; t += Time.deltaTime)
+        {
+            _pillarDemoValue[idx] = Mathf.Lerp(baseVal, 99f, Mathf.SmoothStep(0f, 1f, t / up));
+            yield return null;
+        }
+        _pillarDemoValue[idx] = 99f;
+        yield return new WaitForSeconds(hold);
+        for (float t = 0f; t < down; t += Time.deltaTime)
+        {
+            _pillarDemoValue[idx] = Mathf.Lerp(99f, baseVal, Mathf.SmoothStep(0f, 1f, t / down));
+            yield return null;
+        }
+        _pillarDemo[idx] = false;
+        _pillarDemoRoutines[idx] = null;
+    }
+
+    private System.Collections.IEnumerator QolDemoRoutine(float seconds)
+    {
+        _qolDemoActive = true;
+        float baseVal = _displayQol;
+        float up = seconds * 0.4f, hold = seconds * 0.2f, down = seconds * 0.4f;
+        for (float t = 0f; t < up; t += Time.deltaTime)
+        {
+            _qolDemoValue = Mathf.Lerp(baseVal, 99f, Mathf.SmoothStep(0f, 1f, t / up));
+            yield return null;
+        }
+        _qolDemoValue = 99f;
+        yield return new WaitForSeconds(hold);
+        for (float t = 0f; t < down; t += Time.deltaTime)
+        {
+            _qolDemoValue = Mathf.Lerp(99f, baseVal, Mathf.SmoothStep(0f, 1f, t / down));
+            yield return null;
+        }
+        _qolDemoActive = false;
+        _qolDemoRoutine = null;
+    }
+
+    private RectTransform PillarTransform(Pillar pillar) => pillar switch
+    {
+        Pillar.Environment  => environmentFill  != null ? environmentFill.transform  as RectTransform : null,
+        Pillar.Economy      => economyFill      != null ? economyFill.transform      as RectTransform : null,
+        Pillar.HealthSafety => healthSafetyFill != null ? healthSafetyFill.transform as RectTransform : null,
+        Pillar.CultureEdu   => cultureEduFill   != null ? cultureEduFill.transform   as RectTransform : null,
+        Pillar.Qol          => qolRadialFill    != null ? qolRadialFill.transform    as RectTransform : null,
+        _                   => null
+    };
+
+    private static Shader _glowShader;
+    private const float GlowPeak = 3f; // HDR multiplier at the top of the pulse — must clear the bloom threshold (~2.24) with headroom
+
+    /// <summary>Tutorial highlight: a proper glow pass. Images/bars get an HDR intensity sweep
+    /// above 1 so the bloom post pass halos them; text glows to white (TMP vertex colors clamp
+    /// at 1, so material boost doesn't apply there). Nothing moves or scales.</summary>
+    private static void FlashGraphics(Transform target, float seconds)
+    {
+        if (_glowShader == null) _glowShader = Shader.Find("CityTwin/UI/GlowBoost");
+        float rise = Mathf.Max(0.2f, seconds * 0.35f);
+        float fall = Mathf.Max(0.3f, seconds * 0.65f);
+
+        // Graphics that already have an HDR glow knob (fill bars, ring, UIGlow texts/icons) pulse
+        // that in place so their shader keeps working during the highlight. Swapping materials
+        // (the old approach) stripped the fill mask and flashed the raw texture.
+        var glowOwned = new HashSet<Graphic>();
+        foreach (var mb in target.GetComponentsInChildren<MonoBehaviour>(true))
+        {
+            if (!(mb is IGlowBoost boost)) continue;
+            if (mb is UIGlow ug) glowOwned.Add(ug.GetComponent<Graphic>());
+            else foreach (var img in mb.GetComponentsInChildren<RawImage>(true)) glowOwned.Add(img);
+            PulseGlowBoost(mb, boost, rise, fall);
+        }
+
+        foreach (var g in target.GetComponentsInChildren<Graphic>(true))
+        {
+            if (g == null || glowOwned.Contains(g)) continue;
+            g.DOKill(false);
+
+            if (g is TMPro.TMP_Text)
+            {
+                Color orig = g.color;
+                bool nearWhite = orig.r > 0.85f && orig.g > 0.85f && orig.b > 0.85f;
+                if (!nearWhite)
+                {
+                    DOTween.Sequence().SetTarget(g).SetUpdate(true)
+                        .Append(g.DOColor(Color.white, rise).SetEase(Ease.OutQuad))
+                        .AppendInterval(seconds * 0.2f)
+                        .Append(g.DOColor(orig, fall).SetEase(Ease.InOutSine))
+                        .OnKill(() => { if (g != null) g.color = orig; });
+                }
+                else
+                {
+                    DOTween.Sequence().SetTarget(g).SetUpdate(true)
+                        .Append(g.DOFade(Mathf.Min(0.15f, orig.a), rise).SetEase(Ease.InOutSine))
+                        .Append(g.DOFade(orig.a, fall).SetEase(Ease.InOutSine))
+                        .OnKill(() => { if (g != null) { var c = g.color; c.a = orig.a; g.color = c; } });
+                }
+            }
+            else if (_glowShader != null)
+            {
+                GlowPulse(g, rise, fall);
+            }
+        }
+    }
+
+    /// <summary>Sweep an IGlowBoost graphic's HDR multiplier base → peak → base on its own
+    /// material. The component keeps writing the value every frame, so the tween drives the
+    /// component property, not the material directly.</summary>
+    private static void PulseGlowBoost(MonoBehaviour owner, IGlowBoost boost, float rise, float fall)
+    {
+        owner.DOKill(false);
+        float baseVal = boost.BaseGlowBoost;
+        float peak = Mathf.Max(GlowPeak, baseVal * 1.5f);
+        boost.GlowBoost = baseVal;
+        DOTween.Sequence().SetTarget(owner).SetUpdate(true)
+            .Append(DOTween.To(() => boost.GlowBoost, v => boost.GlowBoost = v, peak, rise).SetEase(Ease.OutQuad))
+            .Append(DOTween.To(() => boost.GlowBoost, v => boost.GlowBoost = v, baseVal, fall).SetEase(Ease.InOutSine))
+            .OnComplete(() => boost.GlowBoost = baseVal)
+            .OnKill(() => boost.GlowBoost = baseVal);
+    }
+
+    /// <summary>Swap in the HDR-boost material, sweep intensity 1 → peak → 1, then restore.</summary>
+    private static void GlowPulse(Graphic g, float rise, float fall)
+    {
+        Material original = g.material;
+        var glow = new Material(_glowShader);
+        glow.SetFloat("_GlowBoost", 1f);
+        g.material = glow;
+
+        DOTween.Sequence().SetTarget(glow).SetUpdate(true)
+            .Append(DOTween.To(() => glow.GetFloat("_GlowBoost"), v => glow.SetFloat("_GlowBoost", v), GlowPeak, rise).SetEase(Ease.OutQuad))
+            .Append(DOTween.To(() => glow.GetFloat("_GlowBoost"), v => glow.SetFloat("_GlowBoost", v), 1f, fall).SetEase(Ease.InOutSine))
+            .OnComplete(() =>
+            {
+                if (g != null) g.material = original;
+                Object.Destroy(glow);
+            })
+            .OnKill(() =>
+            {
+                if (g != null && g.material == glow) g.material = original;
+            });
+    }
+
+    /// <summary>Framerate-independent exponential approach: same convergence per second at any
+    /// fps (raw Lerp(a, b, dt/smoothTime) moved faster at higher framerates). Snaps the last
+    /// sub-visible sliver so values actually arrive instead of crawling forever.</summary>
+    private static float Approach(float current, float target, float k)
+    {
+        float next = Mathf.Lerp(current, target, k);
+        return Mathf.Abs(target - next) < 0.05f ? target : next;
+    }
+
     private void RefreshMetrics()
     {
         if (simulationEngine == null) return;
-        float dt = metricSmoothTime > 0 ? Time.deltaTime / metricSmoothTime : 1f;
-        _displayQol = Mathf.Lerp(_displayQol, simulationEngine.Qol, dt);
-        _displayEnv = Mathf.Lerp(_displayEnv, simulationEngine.Environment, dt);
-        _displayEco = Mathf.Lerp(_displayEco, simulationEngine.Economy, dt);
-        _displaySaf = Mathf.Lerp(_displaySaf, simulationEngine.HealthSafety, dt);
-        _displayCul = Mathf.Lerp(_displayCul, simulationEngine.CultureEdu, dt);
+        float k = metricSmoothTime > 0 ? 1f - Mathf.Exp(-Time.deltaTime / metricSmoothTime) : 1f;
+        _displayQol = Approach(_displayQol, simulationEngine.Qol, k);
+        _displayEnv = Approach(_displayEnv, simulationEngine.Environment, k);
+        _displayEco = Approach(_displayEco, simulationEngine.Economy, k);
+        _displaySaf = Approach(_displaySaf, simulationEngine.HealthSafety, k);
+        _displayCul = Approach(_displayCul, simulationEngine.CultureEdu, k);
+        if (_qolDemoActive)
+        {
+            // Tutorial sweep owns the badge; bars keep tracking live values.
+            SetMetricText(qolText, Mathf.RoundToInt(_qolDemoValue), ref _lastQol, false);
+            if (qolRadialFill != null) qolRadialFill.fill = Mathf.Clamp01(_qolDemoValue / 100f);
+        }
+        else
         SetMetricText(qolText, Mathf.RoundToInt(_displayQol), ref _lastQol, false);
-        SetMetricText(environmentText, Mathf.RoundToInt(_displayEnv), ref _lastEnv, true);
-        SetMetricText(economyText, Mathf.RoundToInt(_displayEco), ref _lastEco, true);
-        SetMetricText(healthSafetyText, Mathf.RoundToInt(_displaySaf), ref _lastSaf, true);
-        SetMetricText(cultureEduText, Mathf.RoundToInt(_displayCul), ref _lastCul, true);
-        if (environmentFill != null) environmentFill.fill = Mathf.Clamp01(_displayEnv * metricFillScale);
-        if (economyFill != null) economyFill.fill = Mathf.Clamp01(_displayEco * metricFillScale);
-        if (healthSafetyFill != null) healthSafetyFill.fill = Mathf.Clamp01(_displaySaf * metricFillScale);
-        if (cultureEduFill != null) cultureEduFill.fill = Mathf.Clamp01(_displayCul * metricFillScale);
-        if (qolRadialFill != null) qolRadialFill.fill = Mathf.Clamp01(_displayQol / 100f);
+        // Tutorial demo sweeps take over individual bars; live values resume when they end.
+        float env = _pillarDemo[0] ? _pillarDemoValue[0] : _displayEnv;
+        float eco = _pillarDemo[1] ? _pillarDemoValue[1] : _displayEco;
+        float saf = _pillarDemo[2] ? _pillarDemoValue[2] : _displaySaf;
+        float cul = _pillarDemo[3] ? _pillarDemoValue[3] : _displayCul;
+        SetMetricText(environmentText, Mathf.RoundToInt(env), ref _lastEnv, true);
+        SetMetricText(economyText, Mathf.RoundToInt(eco), ref _lastEco, true);
+        SetMetricText(healthSafetyText, Mathf.RoundToInt(saf), ref _lastSaf, true);
+        SetMetricText(cultureEduText, Mathf.RoundToInt(cul), ref _lastCul, true);
+        if (environmentFill != null) environmentFill.fill = Mathf.Clamp01(env * metricFillScale);
+        if (economyFill != null) economyFill.fill = Mathf.Clamp01(eco * metricFillScale);
+        if (healthSafetyFill != null) healthSafetyFill.fill = Mathf.Clamp01(saf * metricFillScale);
+        if (cultureEduFill != null) cultureEduFill.fill = Mathf.Clamp01(cul * metricFillScale);
+        if (qolRadialFill != null && !_qolDemoActive) qolRadialFill.fill = Mathf.Clamp01(_displayQol / 100f);
     }
 
     private static void SetMetricText(TextMeshProUGUI label, int value, ref int last, bool percent)

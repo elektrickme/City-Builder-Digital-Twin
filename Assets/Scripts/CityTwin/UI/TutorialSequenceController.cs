@@ -50,6 +50,31 @@ namespace CityTwin.UI
         [Tooltip("Residential hub registry; bubbles anchor to the hub visuals through it. Auto-resolved.")]
         [SerializeField] private HubRegistry hubRegistry;
 
+        [Header("Round-intro reveal (hubs pop → roads draw → particles flow)")]
+        [Tooltip("Delay after the start screen closes before the first hub pops.")]
+        [SerializeField] private float revealStartDelay = 0.5f;
+        [Tooltip("Gap between consecutive hub pops.")]
+        [SerializeField] private float revealHubStagger = 0.12f;
+        [Tooltip("Seconds for the road network to fade in after the hubs.")]
+        [SerializeField] private float revealLinesSeconds = 1.0f;
+        [Tooltip("Seconds for the flow particles to fade in after the roads.")]
+        [SerializeField] private float revealParticlesSeconds = 1.0f;
+        [Tooltip("Road renderer whose holder is faded during the reveal. Auto-resolved.")]
+        [SerializeField] private HubConnectionRenderer connectionRenderer;
+
+        [Header("Step choreography")]
+        [Tooltip("Dashboard used for the metric glow steps. Auto-resolved.")]
+        [SerializeField] private DashboardController dashboard;
+        [Tooltip("Where the placement-hint ripple circles, as a fraction of the play area's half-height below center.")]
+        [SerializeField] private float rippleHintYFraction = 0.75f;
+        [Tooltip("Horizontal offset of the hint spot as a fraction of the play area's half-width (negative = left).")]
+        [SerializeField] private float rippleHintXFraction = -0.05f;
+        [Tooltip("Extra downward shift of the hint spot in play-field pixels.")]
+        [SerializeField] private float rippleHintYExtraPx = 30f;
+        [SerializeField] private float rippleHintRadius = 30f;
+        [Tooltip("Radians/second the ripple hint orbits at (movement is what makes the wake visible).")]
+        [SerializeField] private float rippleHintSpeed = 2.5f;
+
         [Header("Score-band popup")]
         [Tooltip("Popup for score-band messages. If null, reuses the first tutorial popup.")]
         [SerializeField] private TutorialPopup bandPopup;
@@ -71,6 +96,8 @@ namespace CityTwin.UI
         [SerializeField] private float bubbleRise = 24f;
         [SerializeField] private Color bubbleBackColor = new Color(0.10f, 0.12f, 0.16f, 0.92f);
         [SerializeField] private Color bubbleTextColor = Color.white;
+        [Tooltip("Bubble background sprite for hub tips. When set, wins over copying the robot popup's bubble style.")]
+        [SerializeField] private Sprite bubbleSpriteOverride;
 
         [Header("Reaction thresholds (pillar %, 0-100)")]
         [Tooltip("At or below this level a commented pillar produces a negative reaction.")]
@@ -94,8 +121,44 @@ namespace CityTwin.UI
         [Tooltip("Average pillar level (%) below which the Balance card always encourages instead of praising. Stops an empty city (all pillars 0, spread 0) from reading as 'perfectly balanced'.")]
         [SerializeField] private float minBalancePraiseLevel = 20f;
 
+        [Tooltip("Optional SKIP button shown while the tutorial runs; hidden the rest of the round.")]
+        [SerializeField] private GameObject skipButton;
+        [Tooltip("UI hidden on the start screen (building palette pins etc.) and slowly faded in when the round begins.")]
+        [SerializeField] private CanvasGroup[] revealOnGameStart;
+        [SerializeField] private float revealFadeSeconds = 1.4f;
+        [SerializeField] private float revealFadeDelay = 0.8f;
+
         public event Action OnTutorialComplete;
         public bool IsRunning => _isRunning;
+
+        /// <summary>Over-budget placement feedback, spoken by the bottom-right robot popup like every
+        /// other tip. Important enough to bypass the minimum tip gap.</summary>
+        public void ShowBudgetDepletedTip()
+        {
+            if (_isRunning) return; // never cut into the tutorial choreography
+            string text = GetString("ui.budgetDepleted");
+            if (string.IsNullOrEmpty(text) || text == "ui.budgetDepleted") return;
+            DestroyCurrentBubble();
+            if (_bandRoutine != null) StopCoroutine(_bandRoutine);
+            _bandRoutine = StartCoroutine(TipChunksRoutine(ResolveBandPopup(), new List<string> { text }));
+        }
+
+        /// <summary>Player pressed SKIP: abandon the choreography and hand over the game immediately.</summary>
+        public void SkipTutorial()
+        {
+            if (!_isRunning) return;
+            if (_sequenceRoutine != null) { StopCoroutine(_sequenceRoutine); _sequenceRoutine = null; }
+            if (_interruptRoutine != null) { StopCoroutine(_interruptRoutine); _interruptRoutine = null; }
+            HideAll();
+            RestoreRevealVisuals();
+            FinishTutorial(); // unpauses the clock, unlocks the table, fires OnTutorialComplete
+        }
+
+        /// <summary>While true the coordinator ignores tile placements/moves. Blocked by default from
+        /// round start (the language-select tile must not spawn a building), unblocked when the
+        /// tutorial's placement-gate step opens, re-blocked after the first tile lands until the
+        /// tutorial finishes, then free for the whole round.</summary>
+        public bool TileEditsBlocked { get; private set; } = true;
 
         // tutorial state
         private Coroutine _sequenceRoutine;
@@ -135,10 +198,14 @@ namespace CityTwin.UI
             if (contentRoot == null && buildingSpawner != null) contentRoot = buildingSpawner.ContentRoot;
             if (hubRegistry == null) hubRegistry = GetComponentInChildren<HubRegistry>(true) ?? GetComponentInParent<HubRegistry>();
 
+            if (connectionRenderer == null) connectionRenderer = GetComponentInChildren<HubConnectionRenderer>(true) ?? GetComponentInParent<HubConnectionRenderer>();
+            if (dashboard == null) dashboard = GetComponentInChildren<DashboardController>(true) ?? GetComponentInParent<DashboardController>();
+
             if (popups == null || popups.Length == 0)
                 popups = GetComponentsInChildren<TutorialPopup>(true);
 
             HideAll();
+            HideGameStartUi(); // start screen first: pins/skip appear when the round begins
         }
 
         private void OnEnable()
@@ -178,7 +245,45 @@ namespace CityTwin.UI
         {
             if (_sequenceRoutine != null) StopCoroutine(_sequenceRoutine);
             if (_interruptRoutine != null) { StopCoroutine(_interruptRoutine); _interruptRoutine = null; }
+
+            // Round begins: the palette pins and SKIP ease in instead of popping into existence.
+            if (skipButton != null)
+            {
+                skipButton.SetActive(true);
+                var cg = skipButton.GetComponent<CanvasGroup>();
+                if (cg == null) cg = skipButton.AddComponent<CanvasGroup>();
+                DOTween.Kill(cg);
+                cg.alpha = 0f;
+                cg.DOFade(1f, revealFadeSeconds).SetDelay(revealFadeDelay + 0.6f).SetUpdate(true).SetTarget(cg);
+            }
+            if (revealOnGameStart != null)
+            {
+                foreach (var cg in revealOnGameStart)
+                {
+                    if (cg == null) continue;
+                    DOTween.Kill(cg);
+                    cg.alpha = 0f;
+                    cg.blocksRaycasts = true;
+                    cg.DOFade(1f, revealFadeSeconds).SetDelay(revealFadeDelay).SetEase(Ease.InOutSine).SetUpdate(true).SetTarget(cg);
+                }
+            }
+
             _sequenceRoutine = StartCoroutine(RunSequence(0));
+        }
+
+        /// <summary>Hide the game-start UI (palette pins, skip) — called while the start screen owns the stage.</summary>
+        private void HideGameStartUi()
+        {
+            if (revealOnGameStart != null)
+            {
+                foreach (var cg in revealOnGameStart)
+                {
+                    if (cg == null) continue;
+                    DOTween.Kill(cg);
+                    cg.alpha = 0f;
+                    cg.blocksRaycasts = false;
+                }
+            }
         }
 
         public void StopTutorial()
@@ -186,6 +291,12 @@ namespace CityTwin.UI
             if (_sequenceRoutine != null) { StopCoroutine(_sequenceRoutine); _sequenceRoutine = null; }
             if (_interruptRoutine != null) { StopCoroutine(_interruptRoutine); _interruptRoutine = null; }
             _isRunning = false;
+            StopRippleHint();
+            RestoreRevealVisuals();
+            if (skipButton != null) skipButton.SetActive(false);
+            HideGameStartUi(); // back to the start screen: pins hide until the next round begins
+            TileEditsBlocked = true; // back to the start screen: the table locks for the next round
+            sessionTimer?.SetPaused(false);
             HideAll();
             bandPopup?.HideImmediate();
         }
@@ -195,38 +306,130 @@ namespace CityTwin.UI
             _isRunning = true;
             HideAll();
 
+            // Hold the round clock through the whole guided intro; play begins at "The game is on!".
+            sessionTimer?.SetPaused(true);
+
+            // Beat 0: the city reveals itself — hubs pop, roads draw, traffic starts flowing.
+            if (startIndex == 0)
+                yield return CityRevealRoutine();
+
             var steps = configLoader?.Config?.Tutorial?.steps;
             if (steps == null || steps.Length == 0 || popups == null || popups.Length == 0)
             {
                 Debug.LogWarning("[TutorialSequence] No tutorial steps or popups configured - skipping tutorial.");
-                _isRunning = false;
-                _sequenceRoutine = null;
-                OnTutorialComplete?.Invoke();
+                FinishTutorial();
                 yield break;
             }
 
-            int count = Mathf.Min(steps.Length, popups.Length);
-            for (int i = Mathf.Clamp(startIndex, 0, count); i < count; i++)
+            // One popup for the whole tutorial: the robot enters once and stays; only the
+            // speech bubble animates between steps.
+            var popup = popups[0];
+            bool avatarShown = false;
+
+            for (int i = Mathf.Clamp(startIndex, 0, steps.Length); i < steps.Length; i++)
             {
                 _currentStepIndex = i;
                 var step = steps[i];
-                var popup = popups[i];
+                string action = step.action ?? string.Empty;
 
                 string text = localization != null ? localization.GetString(step.textKey) : step.textKey;
                 popup.SetText(text);
 
-                var showTween = popup.PlayShowTween();
+                // Each step change ripples through the city — the scene stays alive while the
+                // android talks, so onlookers see the map "listening" rather than a frozen screen.
+                PulseCenters();
+
+                bool gate = action == "placementGate";
+                if (gate)
+                {
+                    _gateTilePlaced = false;
+                    TileEditsBlocked = false; // the table opens exactly when we ask for the first tile
+                    StartRippleHint();
+                }
+
+                if (!avatarShown && popup.HasSplitParts)
+                {
+                    // The assistant walks in first, beat, then speaks.
+                    var avatarTween = popup.PlayAvatarShowTween();
+                    if (avatarTween != null) yield return avatarTween.WaitForCompletion(true);
+                    yield return new WaitForSeconds(0.5f);
+                    avatarShown = true;
+                }
+
+                var showTween = popup.HasSplitParts ? popup.PlayBubbleShowTween() : popup.PlayShowTween();
                 if (showTween != null) yield return showTween.WaitForCompletion(true);
 
-                float duration = step.durationSeconds > 0 ? step.durationSeconds : 5f;
-                yield return new WaitForSeconds(duration);
+                // Step visual: fire alongside the text, once the popup has landed.
+                // Glow always rides a value animation: the badge sweeps while it blooms.
+                if (action == "scoreGlow" && dashboard != null)
+                {
+                    dashboard.HighlightPillar(DashboardController.Pillar.Qol, 1.8f);
+                    dashboard.PlayQolMaxDemo(1.8f);
+                }
 
-                var hideTween = popup.PlayHideTween();
+                float duration = step.durationSeconds > 0 ? step.durationSeconds : 5f;
+
+                if (action == "categoryGlow" && dashboard != null)
+                {
+                    // Walk the four categories, half a second of glow each.
+                    var pillars = new[]
+                    {
+                        DashboardController.Pillar.Environment,
+                        DashboardController.Pillar.Economy,
+                        DashboardController.Pillar.HealthSafety,
+                        DashboardController.Pillar.CultureEdu
+                    };
+                    foreach (var p in pillars)
+                    {
+                        dashboard.HighlightPillar(p, 1.2f);
+                        dashboard.PlayPillarMaxDemo(p, 1.2f); // bar sweeps to full and back
+                        yield return new WaitForSeconds(0.85f);
+                    }
+                    float rest = duration - pillars.Length * 0.85f;
+                    if (rest > 0f) yield return new WaitForSeconds(rest);
+                }
+                else if (action == "qolDemo" && dashboard != null)
+                {
+                    // QOL sweeps to max and back while Budget and Time flash.
+                    float sweep = Mathf.Min(3f, duration - 0.5f);
+                    dashboard.PlayQolMaxDemo(sweep);
+                    dashboard.HighlightPillar(DashboardController.Pillar.Qol, sweep); // glow rides the sweep
+                    dashboard.HighlightTimer(1.2f);
+                    dashboard.HighlightBudget(1.2f);
+                    yield return new WaitForSeconds(duration);
+                }
+                else
+                {
+                    yield return new WaitForSeconds(duration);
+                }
+
+                if (gate)
+                {
+                    // Hold this step (text + ripple hint) until the first tile lands on the table.
+                    while (!_gateTilePlaced) yield return null;
+                    StopRippleHint();
+                    TileEditsBlocked = true; // freeze the table for the remaining guided steps
+                    yield return new WaitForSeconds(0.8f); // let the placement feedback breathe
+                }
+
+                // Between steps only the bubble swaps; the robot leaves with the final step.
+                bool lastStep = i == steps.Length - 1;
+                var hideTween = !lastStep && popup.HasSplitParts ? popup.PlayBubbleHideTween() : popup.PlayHideTween();
                 if (hideTween != null) yield return hideTween.WaitForCompletion(true);
+                yield return new WaitForSeconds(0.35f); // beat between bubbles
             }
 
+            FinishTutorial();
+        }
+
+        private void FinishTutorial()
+        {
             _isRunning = false;
             _sequenceRoutine = null;
+            StopRippleHint();
+            if (skipButton != null) skipButton.SetActive(false);
+            TileEditsBlocked = false;
+            sessionTimer?.SetPaused(false); // the game is on — clock starts now
             OnTutorialComplete?.Invoke();
         }
 
@@ -235,6 +438,262 @@ namespace CityTwin.UI
             if (popups == null) return;
             foreach (var p in popups)
                 if (p != null) p.HideImmediate();
+        }
+
+        // ===================== Round-intro reveal =====================
+
+        private bool _gateTilePlaced;
+        private GameObject _rippleHint;
+        private GameObject _rippleMarker;
+        private Coroutine _rippleRoutine;
+        private static Sprite _ringSprite;
+
+        [Tooltip("Color of the small glowing ring marking the placement-hint spot.")]
+        [SerializeField] private Color rippleMarkerColor = new Color(0.35f, 0.9f, 1f, 0.9f);
+        [Tooltip("Diameter of the placement-hint ring in play-field pixels.")]
+        [SerializeField] private float rippleMarkerSize = 52f;
+        private readonly List<(Transform t, Vector3 scale)> _revealHubScales = new List<(Transform, Vector3)>();
+
+        /// <summary>Hubs pop in one by one, the road network fades in, then the flow particles start. ~3.5s.</summary>
+        private IEnumerator CityRevealRoutine()
+        {
+            var holder = connectionRenderer != null ? connectionRenderer.RoadHolder : null;
+            CanvasGroup roadsGroup = null;
+            if (holder != null)
+            {
+                roadsGroup = holder.GetComponent<CanvasGroup>();
+                if (roadsGroup == null) roadsGroup = holder.gameObject.AddComponent<CanvasGroup>();
+                roadsGroup.alpha = 0f;
+            }
+
+            var particles = GetComponentsInChildren<ConnectionFlowParticles>(true);
+            foreach (var p in particles) if (p != null) p.RevealFade = 0f;
+
+            // Hubs are created async from config; wait briefly for them.
+            float deadline = Time.time + 5f;
+            while ((hubRegistry == null || hubRegistry.Hubs == null || hubRegistry.Hubs.Count == 0) && Time.time < deadline)
+                yield return null;
+
+            _revealHubScales.Clear();
+            var hubs = hubRegistry != null ? hubRegistry.Hubs : null;
+            if (hubs != null)
+            {
+                foreach (var h in hubs)
+                {
+                    if (h == null) continue;
+                    Vector3 s = h.transform.localScale;
+                    if (s.sqrMagnitude < 0.0001f) s = Vector3.one; // never capture a hidden scale as base
+                    _revealHubScales.Add((h.transform, s));
+                    h.transform.localScale = Vector3.zero;
+                }
+            }
+
+            yield return new WaitForSeconds(revealStartDelay);
+
+            // Beat 1: centers pop in, staggered.
+            foreach (var (t, s) in _revealHubScales)
+            {
+                if (t == null) continue;
+                t.DOKill(false);
+                t.DOScale(s, 0.55f).SetEase(Ease.OutBack).SetTarget(t);
+                yield return new WaitForSeconds(revealHubStagger);
+            }
+            yield return new WaitForSeconds(0.4f);
+
+            // Beat 2: the road network draws in.
+            if (roadsGroup != null)
+            {
+                var fade = roadsGroup.DOFade(1f, revealLinesSeconds).SetEase(Ease.InOutSine).SetTarget(roadsGroup);
+                yield return fade.WaitForCompletion(true);
+            }
+
+            // Beat 3: traffic starts flowing (re-grab: the pool may have grown while we waited).
+            particles = GetComponentsInChildren<ConnectionFlowParticles>(true);
+            for (float t = 0f; t < revealParticlesSeconds; t += Time.deltaTime)
+            {
+                float f = Mathf.Clamp01(t / revealParticlesSeconds);
+                foreach (var p in particles) if (p != null) p.RevealFade = f;
+                yield return null;
+            }
+            foreach (var p in particles) if (p != null) p.RevealFade = 1f;
+            _revealHubScales.Clear();
+        }
+
+        [Tooltip("HDR glow peak the city centers reach at the top of a life-sign pulse (must clear the bloom threshold, ~2.24).")]
+        [SerializeField] private float centerPulseGlowPeak = 3f;
+
+        /// <summary>Quick life-sign across the map: every hub does a small staggered scale pop and
+        /// kicks a gentle ripple into the liquid surface. Used on tutorial step changes.</summary>
+        private void PulseCenters()
+        {
+            var hubs = hubRegistry != null ? hubRegistry.Hubs : null;
+            if (hubs == null || hubs.Count == 0) return;
+            var liquid = GetComponent<LiquidSurface>() ?? GetComponentInParent<LiquidSurface>();
+
+            float delay = 0f;
+            foreach (var h in hubs)
+            {
+                if (h == null) continue;
+                var t = h.transform;
+                if (t.localScale.sqrMagnitude < 0.0001f) continue; // mid-reveal, leave it alone
+
+                t.DOKill(true); // complete any running pop so scales never compound
+                Vector3 baseScale = t.localScale;
+                t.DOPunchScale(baseScale * 0.12f, 0.5f, 1, 0.6f)
+                    .SetDelay(delay)
+                    .SetUpdate(true)
+                    .SetTarget(t);
+                PulseCenterGlow(h, delay);
+                liquid?.Splash(t.position, 1.6f, 0.9f, 0.7f);
+                delay += 0.08f;
+            }
+        }
+
+        /// <summary>HDR flash riding the life-sign pop: each hub graphic sweeps its glow boost above 1
+        /// so the bloom post pass halos the center while it blinks. UIGlow rests at 1 (visually
+        /// identical to no glow) and is added lazily the first time a hub pulses.</summary>
+        private void PulseCenterGlow(ResidentialHubMono hub, float delay)
+        {
+            foreach (var g in hub.GetComponentsInChildren<Graphic>(true))
+            {
+                if (g.GetType().Name.Contains("SVG")) continue; // vector graphics own their material setup
+
+                // Graphics that already own an HDR glow knob (e.g. the procedural stat ring)
+                // are pulsed through it; adding a UIGlow on top would fight their material.
+                IGlowBoost boost = g.GetComponent<IGlowBoost>();
+                MonoBehaviour owner = boost as MonoBehaviour;
+                if (boost == null)
+                {
+                    var glow = g.gameObject.AddComponent<UIGlow>();
+                    glow.glowBoost = 1f; // neutral at rest: centers only glow while blinking
+                    boost = glow;
+                    owner = glow;
+                }
+
+                owner.DOKill(false);
+                float baseVal = boost.BaseGlowBoost;
+                float peak = Mathf.Max(centerPulseGlowPeak, baseVal);
+                DOTween.Sequence().SetTarget(owner).SetUpdate(true).SetDelay(delay)
+                    .Append(DOTween.To(() => boost.GlowBoost, v => boost.GlowBoost = v, peak, 0.18f).SetEase(Ease.OutQuad))
+                    .Append(DOTween.To(() => boost.GlowBoost, v => boost.GlowBoost = v, baseVal, 0.32f).SetEase(Ease.InOutSine))
+                    .OnComplete(() => boost.GlowBoost = baseVal)
+                    .OnKill(() => boost.GlowBoost = baseVal);
+            }
+        }
+
+        /// <summary>Undo any half-finished reveal (StopTutorial mid-flight): everything fully visible.</summary>
+        private void RestoreRevealVisuals()
+        {
+            foreach (var (t, s) in _revealHubScales)
+            {
+                if (t == null) continue;
+                t.DOKill(false);
+                t.localScale = s;
+            }
+            _revealHubScales.Clear();
+
+            var holder = connectionRenderer != null ? connectionRenderer.RoadHolder : null;
+            var cg = holder != null ? holder.GetComponent<CanvasGroup>() : null;
+            if (cg != null) { DOTween.Kill(cg); cg.alpha = 1f; }
+
+            foreach (var p in GetComponentsInChildren<ConnectionFlowParticles>(true))
+                if (p != null) p.RevealFade = 1f;
+        }
+
+        // ===================== Placement-hint ripple =====================
+
+        /// <summary>Invisible interactor circling near the bottom of the play area; the liquid surface
+        /// turns its motion into a beckoning ripple ("put a tile here").</summary>
+        private void StartRippleHint()
+        {
+            if (_rippleHint != null || contentRoot == null) return;
+            var liquid = GetComponent<LiquidSurface>() ?? GetComponentInParent<LiquidSurface>();
+            if (liquid == null) return;
+
+            _rippleHint = new GameObject("TutorialRippleHint");
+            var t = _rippleHint.transform;
+            t.SetParent(contentRoot, false);
+            Vector2 center = new Vector2(
+                contentRoot.rect.xMax * Mathf.Clamp(rippleHintXFraction, -1f, 1f),
+                contentRoot.rect.yMin * Mathf.Clamp01(rippleHintYFraction) - rippleHintYExtraPx);
+            t.localPosition = center;
+            liquid.AddInteractor(_rippleHint); // interactor list drops it automatically once destroyed
+
+            SpawnRippleMarker(center);
+            _rippleRoutine = StartCoroutine(RippleHintOrbit(t, center));
+        }
+
+        /// <summary>Small breathing ring outline (no icon) that marks the hint spot at the ripple's center.</summary>
+        private void SpawnRippleMarker(Vector2 center)
+        {
+            _rippleMarker = new GameObject("TutorialRippleMarker", typeof(RectTransform));
+            var rt = (RectTransform)_rippleMarker.transform;
+            rt.SetParent(contentRoot, false);
+            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.localPosition = center;
+            rt.sizeDelta = new Vector2(rippleMarkerSize, rippleMarkerSize);
+
+            var img = _rippleMarker.AddComponent<Image>();
+            img.sprite = GetOrBuildRingSprite();
+            img.color = rippleMarkerColor;
+            img.raycastTarget = false;
+
+            // gentle breath: scale + alpha, looping until the first tile lands
+            rt.localScale = Vector3.one * 0.85f;
+            rt.DOScale(1.15f, 0.9f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetTarget(rt);
+            img.DOFade(rippleMarkerColor.a * 0.45f, 0.9f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetTarget(img);
+        }
+
+        /// <summary>Procedural soft ring outline sprite (cached).</summary>
+        private static Sprite GetOrBuildRingSprite()
+        {
+            if (_ringSprite != null) return _ringSprite;
+            const int size = 64;
+            const float radius = 26f, thickness = 3.5f;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+            var px = new Color32[size * size];
+            float c = (size - 1) * 0.5f;
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float d = Mathf.Abs(Mathf.Sqrt((x - c) * (x - c) + (y - c) * (y - c)) - radius);
+                    float a = Mathf.Clamp01(1f - (d - thickness * 0.5f)); // 1px soft edge
+                    px[y * size + x] = new Color32(255, 255, 255, (byte)(a * 255));
+                }
+            }
+            tex.SetPixels32(px);
+            tex.Apply(false, true);
+            _ringSprite = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect);
+            _ringSprite.name = "TutorialHintRing";
+            return _ringSprite;
+        }
+
+        private IEnumerator RippleHintOrbit(Transform t, Vector2 center)
+        {
+            float a = 0f;
+            while (t != null)
+            {
+                a += Time.deltaTime * rippleHintSpeed;
+                t.localPosition = center + new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * rippleHintRadius;
+                yield return null;
+            }
+        }
+
+        private void StopRippleHint()
+        {
+            if (_rippleRoutine != null) { StopCoroutine(_rippleRoutine); _rippleRoutine = null; }
+            if (_rippleHint != null) { Destroy(_rippleHint); _rippleHint = null; }
+            if (_rippleMarker != null)
+            {
+                _rippleMarker.transform.DOKill(false);
+                var img = _rippleMarker.GetComponent<Image>();
+                if (img != null) img.DOKill(false);
+                Destroy(_rippleMarker);
+                _rippleMarker = null;
+            }
         }
 
         // ===================== Live feedback =====================
@@ -266,6 +725,7 @@ namespace CityTwin.UI
         {
             _highestBandShown = -1;
             _anyPlacement = false;
+            _firstSplashDone = false;
             _pillarLastTime.Clear();
             _hubLastTime.Clear();
             _nextReactionTime = Time.time + reactionIntervalSeconds;
@@ -303,12 +763,49 @@ namespace CityTwin.UI
                 EvaluateBands();
         }
 
+        private bool _firstSplashDone;
+
         private void HandleTileSpawned(string engineTileId, string buildingId, GameObject marker)
         {
+            // The round's very first building lands with a big, slow ripple — a moment, not a blip.
+            if (!_firstSplashDone && marker != null)
+            {
+                _firstSplashDone = true;
+                var liquid = GetComponent<LiquidSurface>() ?? GetComponentInParent<LiquidSurface>();
+                liquid?.Splash(marker.transform.position, 3.5f, 3f, 1.8f);
+            }
+
+            _gateTilePlaced = true; // releases the tutorial's wait-for-first-tile step
+            _lastPlacementTime = Time.time;
+            _reminderStreak = 0;    // player is active again: idle nudging starts fresh
             if (!InGameplay) return;
             _anyPlacement = true;   // arms the starting (0-20) band and the timed reactions
-            EvaluateBands();        // may interrupt a running tutorial
+            EvaluateBands();
         }
+
+        [Tooltip("Seconds of total tip silence after which the robot gently re-shows the current band's pro-tip (or the place-a-tile nudge before the first placement).")]
+        [SerializeField] private float tipReminderSeconds = 30f;
+        [Tooltip("Each consecutive reminder without a placement in between waits this much longer, so idle nudging never turns into nagging. Resets on placement.")]
+        [SerializeField] private float reminderBackoffSeconds = 20f;
+        [Tooltip("Never show two tips (band, reaction or reminder) closer together than this — stops the early game from firing a tip on every single placement.")]
+        [SerializeField] private float minTipGapSeconds = 25f;
+        [Tooltip("Hub indices that never host reaction bubbles (their bubbles would cover menus/dashboard). Layout-specific.")]
+        [SerializeField] private int[] bubbleExcludedHubIndices = new int[0];
+
+        private float _lastTipTime;
+        private float _lastPlacementTime;
+        private int _reminderStreak;
+
+        private bool IsBubbleExcludedHub(int hubIndex)
+        {
+            if (bubbleExcludedHubIndices == null) return false;
+            for (int i = 0; i < bubbleExcludedHubIndices.Length; i++)
+                if (bubbleExcludedHubIndices[i] == hubIndex) return true;
+            return false;
+        }
+
+        /// <summary>A tip visual (robot popup or hub bubble) is currently on screen.</summary>
+        private bool TipVisualActive => _bandRoutine != null || _reactionRoutine != null || _currentBubble != null;
 
         private void Update()
         {
@@ -317,11 +814,56 @@ namespace CityTwin.UI
             if (!IsPlaying)
             {
                 _nextReactionTime = Time.time + reactionIntervalSeconds;
+                _lastTipTime = Time.time;
                 return;
             }
-            if (Time.time < _nextReactionTime) return;
-            _nextReactionTime = Time.time + reactionIntervalSeconds;
-            EvaluateTimedReaction();
+
+            if (Time.time >= _nextReactionTime)
+            {
+                _nextReactionTime = Time.time + reactionIntervalSeconds;
+                // Never talk over an active tip, and keep a minimum breath between tips.
+                if (!TipVisualActive && Time.time - _lastTipTime >= minTipGapSeconds)
+                    EvaluateTimedReaction();
+            }
+
+            // Graceful idle fallback: nudge sooner at first, then back off the longer the idle lasts.
+            float reminderWait = tipReminderSeconds + Mathf.Min(_reminderStreak, 3) * reminderBackoffSeconds;
+            if (!TipVisualActive
+                && Time.time - _lastTipTime > reminderWait
+                && Time.time - _lastPlacementTime > tipReminderSeconds)
+            {
+                _reminderStreak++;
+                ShowTipReminder();
+            }
+        }
+
+        /// <summary>Quiet-period reminder. Before the first placement: the approved place-a-tile nudge.
+        /// After: the current score band's pro-tip paragraph (approved text, always contextual).</summary>
+        private void ShowTipReminder()
+        {
+            _lastTipTime = Time.time;
+            var popup = ResolveBandPopup();
+            if (popup == null) return;
+
+            string text;
+            if (!_anyPlacement)
+            {
+                text = GetString("ui.inactivity"); // "Place a physical tile on the interactive table."
+            }
+            else
+            {
+                if (_liveBands == null || _liveBands.Count == 0) BuildLiveBands();
+                int idx = simulationEngine != null ? CurrentBandIndex(simulationEngine.Qol) : -1;
+                if (idx < 0 || _liveBands.Count == 0) return;
+                var chunks = ChunkTipText(GetString(_liveBands[idx].bodyKey), tipChunkMaxChars);
+                if (chunks.Count == 0) return;
+                // The pro-tip is the last paragraph-chunk of every band text.
+                text = chunks[chunks.Count - 1];
+            }
+            if (string.IsNullOrEmpty(text)) return;
+
+            if (_bandRoutine != null) StopCoroutine(_bandRoutine);
+            _bandRoutine = StartCoroutine(TipChunksRoutine(popup, new List<string> { text }));
         }
 
         // ---- score bands ----
@@ -347,14 +889,104 @@ namespace CityTwin.UI
             return idx;
         }
 
+        [Tooltip("Longest text chunk (chars) shown in one popup bubble; longer tip texts are split at sentence boundaries and shown one after another.")]
+        [SerializeField] private int tipChunkMaxChars = 170;
+        [Tooltip("Extra reading seconds per character of a tip chunk (added to a 2.5s base).")]
+        [SerializeField] private float tipSecondsPerChar = 0.05f;
+        [Tooltip("Quiet pause between consecutive chunks of one tip, so multi-part tips breathe instead of machine-gunning.")]
+        [SerializeField] private float tipChunkGapSeconds = 1.6f;
+
         private void ShowBand(GameConfig.EndMessageData band)
         {
             string title = GetString(band.titleKey);
             string body = GetString(band.bodyKey);
-            string text = string.IsNullOrEmpty(body) ? title : $"{title}\n\n{body}";
 
-            if (_isRunning) { InterruptTutorialWithBand(text); return; }
-            ShowPopup(ResolveBandPopup(), text, bandPopupSeconds, ref _bandRoutine);
+            // Never cut into the choreographed tutorial; the band re-fires on a later placement if earned.
+            if (_isRunning) { _highestBandShown--; return; }
+
+            // Early game crosses a band on nearly every placement — keep a minimum gap so the robot
+            // doesn't comment on each tile. A deferred band re-fires on a later placement.
+            if (Time.time - _lastTipTime < minTipGapSeconds) { _highestBandShown--; return; }
+
+            DestroyCurrentBubble(); // a band milestone outranks a lingering hub bubble
+
+            // Client tip texts run to several paragraphs — far too much for one bubble. Split into
+            // popup-sized chunks and page through them in the same robot popup the tutorial uses.
+            var chunks = ChunkTipText(body, tipChunkMaxChars);
+            if (chunks.Count == 0) chunks.Add(string.Empty);
+            chunks[0] = string.IsNullOrEmpty(title) ? chunks[0] : (title + "\n" + chunks[0]).Trim();
+
+            if (_bandRoutine != null) StopCoroutine(_bandRoutine);
+            _bandRoutine = StartCoroutine(TipChunksRoutine(ResolveBandPopup(), chunks));
+        }
+
+        /// <summary>Split a long tip text into bubble-sized chunks: paragraphs first, then sentences
+        /// packed greedily up to maxChars. Handles both real and literal "\n" escapes.</summary>
+        private static List<string> ChunkTipText(string text, int maxChars)
+        {
+            var chunks = new List<string>();
+            if (string.IsNullOrEmpty(text)) return chunks;
+            text = text.Replace("\\n", "\n");
+
+            foreach (var paraRaw in text.Split('\n'))
+            {
+                string para = paraRaw.Trim();
+                if (para.Length == 0) continue;
+                if (para.Length <= maxChars) { chunks.Add(para); continue; }
+
+                var current = new System.Text.StringBuilder();
+                foreach (System.Text.RegularExpressions.Match m in
+                         System.Text.RegularExpressions.Regex.Matches(para, @"[^.!?…]+[.!?…]+(\s+|$)|[^.!?…]+$"))
+                {
+                    string sentence = m.Value.Trim();
+                    if (sentence.Length == 0) continue;
+                    if (current.Length > 0 && current.Length + sentence.Length + 1 > maxChars)
+                    {
+                        chunks.Add(current.ToString());
+                        current.Clear();
+                    }
+                    if (current.Length > 0) current.Append(' ');
+                    current.Append(sentence);
+                }
+                if (current.Length > 0) chunks.Add(current.ToString());
+            }
+            return chunks;
+        }
+
+        /// <summary>Page through tip chunks in the robot popup: robot enters with the first chunk and
+        /// stays while only the bubble swaps, exactly like the tutorial steps.</summary>
+        private IEnumerator TipChunksRoutine(TutorialPopup popup, List<string> chunks)
+        {
+            if (popup == null) yield break;
+            for (int i = 0; i < chunks.Count; i++)
+            {
+                popup.SetText(chunks[i]);
+
+                Tween show;
+                if (i == 0 && popup.HasSplitParts)
+                {
+                    // Signature entrance every time: the android walks in first, beat, then speaks.
+                    var avatarTween = popup.PlayAvatarShowTween();
+                    if (avatarTween != null) yield return avatarTween.WaitForCompletion(true);
+                    yield return new WaitForSeconds(0.45f);
+                    show = popup.PlayBubbleShowTween();
+                }
+                else
+                {
+                    show = popup.HasSplitParts ? popup.PlayBubbleShowTween() : popup.PlayShowTween();
+                }
+                if (show != null) yield return show.WaitForCompletion(true);
+
+                float readSeconds = Mathf.Max(bandPopupSeconds * 0.5f, 2.5f + chunks[i].Length * tipSecondsPerChar);
+                yield return new WaitForSeconds(readSeconds);
+
+                bool last = i == chunks.Count - 1;
+                Tween hide = !last && popup.HasSplitParts ? popup.PlayBubbleHideTween() : popup.PlayHideTween();
+                if (hide != null) yield return hide.WaitForCompletion(true);
+                if (!last) yield return new WaitForSeconds(tipChunkGapSeconds);
+            }
+            _lastTipTime = Time.time; // quiet-period clock restarts when the tip finishes
+            _bandRoutine = null;
         }
 
         /// <summary>Cut the running tutorial short for a band message, then resume the tutorial from the
@@ -461,7 +1093,12 @@ namespace CityTwin.UI
                 if (hub < 0) hub = ChooseReactionHub(pillar, negative);
                 if (hub >= 0) { SpawnReactionBubble(hub, text); return; }
             }
-            ShowPopup(ResolveReactionPopup(), text, reactionPopupSeconds, ref _reactionRoutine);
+            // Robot popup path (hub bubbles off): same bottom-right android with the
+            // icon → pause → bubble entrance used by every other tip.
+            var chunks = ChunkTipText(text, tipChunkMaxChars);
+            if (chunks.Count == 0) return;
+            if (_bandRoutine != null) StopCoroutine(_bandRoutine);
+            _bandRoutine = StartCoroutine(TipChunksRoutine(ResolveBandPopup(), chunks));
         }
 
         /// <summary>Hub whose commented pillar moved the most since the last reaction tick (by magnitude, so a
@@ -485,7 +1122,7 @@ namespace CityTwin.UI
             float bestAbs = 0.01f;   // ignore float noise; genuinely unmoved hubs never win
             for (int i = 0; i < hubs.Count; i++)
             {
-                if (HubOnCooldown(i)) continue;
+                if (HubOnCooldown(i) || IsBubbleExcludedHub(i)) continue;
                 float d = PillarValue(hubs[i], pillar) - SafeGet(prev, i);
                 if (Mathf.Abs(d) > bestAbs) { bestAbs = Mathf.Abs(d); best = i; }
             }
@@ -526,6 +1163,7 @@ namespace CityTwin.UI
             float bestAnyVal = negative ? float.MaxValue : float.MinValue;
             for (int i = 0; i < hubs.Count; i++)
             {
+                if (IsBubbleExcludedHub(i)) continue; // bubble would sit over menus/dashboard
                 float v = PillarValue(hubs[i], pillar);
                 if (negative ? v < bestAnyVal : v > bestAnyVal) { bestAnyVal = v; bestAny = i; }
                 if (!HubOnCooldown(i) && (negative ? v < bestFreeVal : v > bestFreeVal)) { bestFreeVal = v; bestFree = i; }
@@ -564,6 +1202,17 @@ namespace CityTwin.UI
 
         private void HandleTimerEnded()
         {
+            // The end report owns the screen: any tip robot, band popup, or citizen bubble that is
+            // visible (or animating in) disappears the moment the final screen pops up.
+            if (_bandRoutine != null) { StopCoroutine(_bandRoutine); _bandRoutine = null; }
+            if (_reactionRoutine != null) { StopCoroutine(_reactionRoutine); _reactionRoutine = null; }
+            if (_interruptRoutine != null) { StopCoroutine(_interruptRoutine); _interruptRoutine = null; }
+            DestroyCurrentBubble();
+            bandPopup?.HideImmediate();
+            reactionPopup?.HideImmediate();
+            if (popups != null)
+                foreach (var p in popups) p?.HideImmediate();
+
             if (endScreen == null || simulationEngine == null) return;
 
             // Balance card: the spread between the strongest and weakest pillar decides the verdict.
@@ -588,7 +1237,12 @@ namespace CityTwin.UI
                 ? GetString("reaction.positive.access.v2")
                 : GetString("reaction.negative.access.v2");
 
-            endScreen.SetReport(balance, strategic);
+            // Budget card: approved "Budget Remaining" label + the live remaining amount.
+            string budget = coordinator != null
+                ? $"{GetString("report.budgetRemaining")}: {GetString("ui.currency")} {coordinator.Budget}"
+                : string.Empty;
+
+            endScreen.SetReport(balance, strategic, budget);
         }
 
         // ===================== shared helpers =====================
@@ -639,37 +1293,63 @@ namespace CityTwin.UI
             var rt = (RectTransform)go.transform;
             rt.SetParent(contentRoot, false);
             rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
-            rt.pivot = new Vector2(0.5f, 0f);   // grow upward from the hub point
+            // Bottom-right pivot: the bubble sprite's tail corner sits on the hub and the body
+            // grows up-left, matching how the robot popup's bubble points at its speaker.
+            rt.pivot = new Vector2(1f, 0f);
 
             var cg = go.AddComponent<CanvasGroup>();
             cg.blocksRaycasts = false;
             cg.interactable = false;
 
             var bg = go.AddComponent<Image>();
-            bg.sprite = GetOrBuildBubbleSprite();
-            bg.type = Image.Type.Sliced;
-            bg.color = bubbleBackColor;
+            // Explicit sprite override wins; otherwise match the robot popup's speech-bubble style.
+            var template = FirstPopup() != null ? FirstPopup().BubbleBackgroundImage : null;
+            if (bubbleSpriteOverride != null)
+            {
+                bg.sprite = bubbleSpriteOverride;
+                bg.type = Image.Type.Sliced;
+                bg.color = Color.white;
+            }
+            else if (template != null)
+            {
+                bg.sprite = template.sprite;
+                bg.type = template.type;
+                bg.color = template.color;
+                bg.material = template.material;
+                bg.pixelsPerUnitMultiplier = template.pixelsPerUnitMultiplier;
+            }
+            else
+            {
+                bg.sprite = GetOrBuildBubbleSprite();
+                bg.type = Image.Type.Sliced;
+                bg.color = bubbleBackColor;
+            }
             bg.raycastTarget = false;
 
+            // Fixed width, dynamic height: same layout recipe as the robot popup's bubble, so any
+            // text length fits with even padding instead of the old measure-and-hope sizing.
+            var vlg = go.AddComponent<VerticalLayoutGroup>();
+            int pad = Mathf.RoundToInt(bubblePadding);
+            vlg.padding = new RectOffset(pad, pad, Mathf.RoundToInt(pad * 0.75f), pad);
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            var fitter = go.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            rt.sizeDelta = new Vector2(bubbleMaxWidth, 0f);
+
             var textGo = new GameObject("Text", typeof(RectTransform));
-            var trt = (RectTransform)textGo.transform;
-            trt.SetParent(rt, false);
+            textGo.transform.SetParent(rt, false);
             var tmp = textGo.AddComponent<TextMeshProUGUI>();
             tmp.text = text;
             tmp.fontSize = bubbleFontSize;
             tmp.color = bubbleTextColor;
             tmp.alignment = TextAlignmentOptions.Center;
-            tmp.raycastTarget = false;   // TMP word-wraps by default; rect width below constrains it
+            tmp.raycastTarget = false;   // VLG constrains width; TMP wraps and reports height
 
-            float maxTextWidth = Mathf.Max(40f, bubbleMaxWidth - 2f * bubblePadding);
-            Vector2 pref = tmp.GetPreferredValues(text, maxTextWidth, 0f);
-            float textW = Mathf.Min(pref.x, maxTextWidth);
-            rt.sizeDelta = new Vector2(textW + 2f * bubblePadding, pref.y + 2f * bubblePadding);
-
-            trt.anchorMin = Vector2.zero;
-            trt.anchorMax = Vector2.one;
-            trt.offsetMin = new Vector2(bubblePadding, bubblePadding);
-            trt.offsetMax = new Vector2(-bubblePadding, -bubblePadding);
+            LayoutRebuilder.ForceRebuildLayoutImmediate(rt); // valid height before the first frame
 
             if (viaRegistry)
                 rt.localPosition = hubLocal + new Vector3(0f, bubbleHubGap, 0f);
@@ -677,6 +1357,7 @@ namespace CityTwin.UI
                 rt.anchoredPosition = (Vector2)hubLocal + new Vector2(0f, bubbleHubGap);
 
             _hubLastTime[hubIndex] = Time.unscaledTime;
+            _lastTipTime = Time.time;
             _currentBubble = go;
             if (_bubbleRoutine != null) StopCoroutine(_bubbleRoutine);
             _bubbleRoutine = StartCoroutine(BubbleRoutine(rt, cg, go));

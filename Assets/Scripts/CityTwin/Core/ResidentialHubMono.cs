@@ -15,6 +15,8 @@ namespace CityTwin.Core
         public int Population = 50000;
 
         [SerializeField] private TextMeshProUGUI populationText;
+        [Tooltip("Procedural stat ring (preferred): one shader draws all four quadrant arcs, perfectly aligned. When set, the legacy per-quadrant images below are ignored.")]
+        [SerializeField] private CityTwin.UI.HubStatRing statRing;
         [SerializeField] private Image safetyFillImage;
         [SerializeField] private Image economyFillImage;
         [SerializeField] private Image cultureFillImage;
@@ -56,15 +58,41 @@ namespace CityTwin.Core
 #endif
         }
 
-        /// <summary>Update indicator circles based on per-hub metric scores. Each metric caps at 20 in the simulation, so we treat 20 as "full" (0.25) for the quarter-pie.</summary>
+        /// <summary>Update indicator arcs based on per-hub metric scores (percent, 0-100).</summary>
         public void SetMetricState(float env, float eco, float safety, float culture)
         {
-            const float maxFill = 0.25f;
             const float metricCap = 100f; // values are percentages (0-100)
+
+            if (statRing != null)
+            {
+                // Procedural ring: each quadrant fills 0-1 within its own (gap-separated) sector.
+                statRing.DOKill();
+                TweenRing(() => statRing.environmentFill, v => statRing.environmentFill = v, Mathf.Clamp01(env / metricCap));
+                TweenRing(() => statRing.economyFill, v => statRing.economyFill = v, Mathf.Clamp01(eco / metricCap));
+                TweenRing(() => statRing.safetyFill, v => statRing.safetyFill = v, Mathf.Clamp01(safety / metricCap));
+                TweenRing(() => statRing.cultureFill, v => statRing.cultureFill = v, Mathf.Clamp01(culture / metricCap));
+                return;
+            }
+
+            const float maxFill = 0.25f; // legacy quarter-pie images
             TweenFill(environmentFillImage, Mathf.Clamp01(env / metricCap) * maxFill);
             TweenFill(economyFillImage, Mathf.Clamp01(eco / metricCap) * maxFill);
             TweenFill(safetyFillImage, Mathf.Clamp01(safety / metricCap) * maxFill);
             TweenFill(cultureFillImage, Mathf.Clamp01(culture / metricCap) * maxFill);
+        }
+
+        /// <summary>Ring counterpart of <see cref="TweenFill"/>: same easing, drives a component field.</summary>
+        private void TweenRing(System.Func<float> getter, System.Action<float> setter, float target)
+        {
+            if (metricTweenDuration <= 0f)
+            {
+                setter(target);
+                return;
+            }
+            DOTween.To(() => getter(), v => setter(v), target, metricTweenDuration)
+                   .SetEase(Ease.OutCubic)
+                   .SetUpdate(true)
+                   .SetTarget(statRing);
         }
 
         /// <summary>Animate an arc's fillAmount to target, mirroring the dashboard bar easing. Kills any in-flight tween on that image first.</summary>
@@ -86,6 +114,7 @@ namespace CityTwin.Core
         private void OnDisable()
         {
             // Stop tweens so pooled / disabled hubs don't leak DOTween references.
+            if (statRing != null) statRing.DOKill();
             if (environmentFillImage != null) environmentFillImage.DOKill();
             if (economyFillImage != null) economyFillImage.DOKill();
             if (safetyFillImage != null) safetyFillImage.DOKill();
@@ -94,8 +123,15 @@ namespace CityTwin.Core
 
         private void Start()
         {
-            // Start with empty indicator slices; they will be filled when metrics are pushed.
+            // Start with empty indicator arcs; they will be filled when metrics are pushed.
             const float empty = 0f;
+            if (statRing != null)
+            {
+                statRing.environmentFill = empty;
+                statRing.economyFill = empty;
+                statRing.safetyFill = empty;
+                statRing.cultureFill = empty;
+            }
             if (environmentFillImage != null) environmentFillImage.fillAmount = empty;
             if (economyFillImage != null) economyFillImage.fillAmount = empty;
             if (safetyFillImage != null) safetyFillImage.fillAmount = empty;

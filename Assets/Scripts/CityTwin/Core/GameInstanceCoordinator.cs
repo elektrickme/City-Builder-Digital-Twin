@@ -23,10 +23,16 @@ namespace CityTwin.Core
         [SerializeField] private HubRegistry hubRegistry;
         [Tooltip("Optional. Draws connection lines between buildings and hubs. Assign or auto-found in children.")]
         [SerializeField] private HubConnectionRenderer hubConnectionRenderer;
+        [Tooltip("Tutorial controller; while it blocks tile edits, incoming tile updates are ignored. Auto-resolved.")]
+        [SerializeField] private TutorialSequenceController tutorialSequence;
+        [Tooltip("Dashboard used for over-budget feedback (budget readout blink). Auto-resolved.")]
+        [SerializeField] private DashboardController dashboard;
         [Tooltip("Optional. Validates building overlap against buildings and hubs using visual radii.")]
         [SerializeField] private PlacementOverlapValidator placementOverlapValidator;
         [Tooltip("Optional. Manages randomized hub layout presets. Restart will pick a new random preset.")]
         [SerializeField] private HubLayoutManager hubLayoutManager;
+        [Tooltip("Omit outer ring links: top (LT–RT), diagonal BL–TR, and diagonal TL–BR.")]
+        [SerializeField] private bool excludeDefaultOuterHubLinks = true;
         [Tooltip("Optional. Start/language overlay. Restart will re-show it so the next session is a fresh start.")]
         [SerializeField] private StartScreenController startScreen;
         [Tooltip("Optional. End-of-session overlay. Restart will hide it.")]
@@ -36,6 +42,9 @@ namespace CityTwin.Core
 
         private readonly Dictionary<string, string> _oscToEngineTileId = new Dictionary<string, string>();
         private readonly HashSet<string> _overBudgetTiles = new HashSet<string>();
+        // Tiles that sat on the table while the tutorial locked it (e.g. the language-select tile);
+        // they must move before they count as a placement.
+        private readonly Dictionary<string, Vector2> _parkedTilePositions = new Dictionary<string, Vector2>();
         private int _overBudgetCounter;
 
         /// <summary>Current budget for this instance. Decremented when placing tiles.</summary>
@@ -77,6 +86,10 @@ namespace CityTwin.Core
                 tileTracking.OnTileRemoved += OnTileRemoved;
             }
             if (hubConnectionRenderer == null) hubConnectionRenderer = GetComponentInChildren<HubConnectionRenderer>(true);
+            if (hubConnectionRenderer != null)
+                hubConnectionRenderer.OnRoadGeometryChanged += HandleRoadGeometryChanged;
+            if (tutorialSequence == null) tutorialSequence = GetComponentInChildren<TutorialSequenceController>(true);
+            if (dashboard == null) dashboard = GetComponentInChildren<DashboardController>(true);
             if (simulationEngine != null)
                 simulationEngine.OnMetricsChanged += PushHubIndicators;
         }
@@ -105,6 +118,8 @@ namespace CityTwin.Core
 
         private void OnDisable()
         {
+            if (hubConnectionRenderer != null)
+                hubConnectionRenderer.OnRoadGeometryChanged -= HandleRoadGeometryChanged;
             if (configLoader != null)
                 configLoader.OnConfigLoaded -= HandleConfigLoaded;
             if (tileTracking != null)
@@ -134,8 +149,13 @@ namespace CityTwin.Core
                 cfg.Scoring != null ? cfg.Scoring.haloMultiplierSmall : 1f,
                 cfg.Scoring != null ? cfg.Scoring.haloMultiplierMedium : 1f,
                 cfg.Scoring != null ? cfg.Scoring.haloMultiplierLarge : 1f);
+            buildingSpawner?.SetTileScale(cfg.Scoring != null ? cfg.Scoring.tileScale : 1f);
 
             simulationEngine?.SetConfig(cfg.Scoring, cfg.Accessibility);
+
+            hubConnectionRenderer?.SetConnectionRemoval(
+                cfg.Accessibility != null ? cfg.Accessibility.connectionRemovalRate : 0f,
+                cfg.Accessibility != null ? cfg.Accessibility.connectionRemovalSeed : 4321);
 
             if (simulationEngine != null && buildingSpawner != null)
             {
@@ -207,6 +227,7 @@ namespace CityTwin.Core
             tileTracking?.ClearSessions();
             _oscToEngineTileId.Clear();
             _overBudgetTiles.Clear();
+            _parkedTilePositions.Clear();
 
             if (configLoader?.Config != null)
                 Budget = configLoader.Config.Budget?.startingBudget ?? 1000;
@@ -221,6 +242,20 @@ namespace CityTwin.Core
             sessionTimer?.Stop();
             endScreen?.Hide();
             startScreen?.ShowStartScreen();
+        }
+
+        /// <summary>
+        /// Rebuild the road network + stops from the CURRENT hub positions and refresh all
+        /// tile connections/metrics. Use after moving cities (hubs) — including live in play
+        /// mode via the component context menu — without restarting the round.
+        /// </summary>
+        [ContextMenu("Regenerate Road Network")]
+        public void RegenerateRoadNetworkDebug()
+        {
+            ApplyRegistryHubsToSimulation();
+            GenerateTransitStops();
+            simulationEngine?.RefreshAllTileConnections();
+            simulationEngine?.RecalculateMetrics();
         }
 
         // ── Debug / playtest setters (used by the secret menu, MouseBuildingTester) ──
@@ -250,6 +285,40 @@ namespace CityTwin.Core
         public void SetSessionLengthDebug(int seconds)
         {
             sessionTimer?.SetGameplaySeconds(seconds);
+        }
+
+        /// <summary>Debug/playtest: reseed the bus-stop layout (jitter + which stops the removal rate
+        /// drops) and regenerate live. Each seed gives a different but repeatable pattern.</summary>
+        public void SetBusStopSeedDebug(int seed)
+        {
+            if (configLoader != null && configLoader.Config != null && configLoader.Config.Stops != null)
+                configLoader.Config.Stops.seed = seed;
+            GenerateTransitStops();
+            simulationEngine?.RefreshAllTileConnections();
+        }
+
+        /// <summary>Debug/playtest: fraction of generated bus stops randomly removed (0 = keep all).
+        /// Regenerates stops live; deterministic per seed, so the same rate always drops the same stops.</summary>
+        public void SetBusStopRemovalDebug(float removalRate)
+        {
+            if (configLoader != null && configLoader.Config != null && configLoader.Config.Stops != null)
+                configLoader.Config.Stops.removalRate = Mathf.Clamp01(removalRate);
+            GenerateTransitStops();
+            // Same cache-refresh rule as the spacing slider: tiles hold stop indices into the old list.
+            simulationEngine?.RefreshAllTileConnections();
+        }
+
+        /// <summary>Debug/playtest: fraction of per-building connection lines randomly hidden to de-clutter
+        /// a dense network (visual only; scoring/connectivity unaffected). Stable per seed. Edits config in
+        /// place so Save config persists it.</summary>
+        public void SetConnectionRemovalDebug(float rate)
+        {
+            float clamped = Mathf.Clamp01(rate);
+            if (configLoader != null && configLoader.Config != null && configLoader.Config.Accessibility != null)
+                configLoader.Config.Accessibility.connectionRemovalRate = clamped;
+            int seed = configLoader != null && configLoader.Config != null && configLoader.Config.Accessibility != null
+                ? configLoader.Config.Accessibility.connectionRemovalSeed : 4321;
+            hubConnectionRenderer?.SetConnectionRemoval(clamped, seed);
         }
 
         /// <summary>Debug/playtest: change bus-stop spacing (lower = denser) and regenerate stops live.
@@ -315,8 +384,21 @@ namespace CityTwin.Core
                 cfg.Scoring.haloMultiplierSmall = buildingSpawner.GetDebugHaloScaleForSize(BuildingSpawner.HaloSizeSmall);
                 cfg.Scoring.haloMultiplierMedium = buildingSpawner.GetDebugHaloScaleForSize(BuildingSpawner.HaloSizeMedium);
                 cfg.Scoring.haloMultiplierLarge = buildingSpawner.GetDebugHaloScaleForSize(BuildingSpawner.HaloSizeLarge);
+                cfg.Scoring.tileScale = buildingSpawner.TileScale;
             }
         }
+
+        /// <summary>Debug/playtest: cosmetic scale for placed building tiles. Applied live; persisted by Save.</summary>
+        public void SetTileScaleDebug(float scale)
+        {
+            buildingSpawner?.SetTileScale(scale);
+            var cfg = configLoader != null ? configLoader.Config : null;
+            if (cfg != null && cfg.Scoring != null && buildingSpawner != null)
+                cfg.Scoring.tileScale = buildingSpawner.TileScale;
+        }
+
+        /// <summary>Current tile visual scale (from the spawner).</summary>
+        public float DebugTileScale => buildingSpawner != null ? buildingSpawner.TileScale : 1f;
 
         private void ApplyRegistryHubsToSimulation()
         {
@@ -359,7 +441,7 @@ namespace CityTwin.Core
 
             const int k = 3;
             var edgeSet = new HashSet<long>();
-            int edgeCount = 0;
+            var excluded = excludeDefaultOuterHubLinks ? BuildDefaultExcludedHubEdges(hubs) : null;
 
             for (int i = 0; i < hubs.Count; i++)
             {
@@ -377,6 +459,8 @@ namespace CityTwin.Core
                 {
                     int a = i;
                     int b = nearest[n].index;
+                    if (IsExcludedHubEdge(a, b, excluded)) continue;
+
                     int lo = Mathf.Min(a, b);
                     int hi = Mathf.Max(a, b);
                     long key = ((long)lo << 32) | (uint)hi;
@@ -385,11 +469,70 @@ namespace CityTwin.Core
                     float dist = nearest[n].dist;
                     graph.AddEdge(a, b, dist);
                     graph.AddEdge(b, a, dist);
-                    edgeCount += 2;
                 }
             }
 
             simulationEngine.SetTransitGraph(graph);
+        }
+
+        /// <summary>Corner hubs by mean X/Y split: LT, LB, RT, RB.</summary>
+        private static (int lt, int lb, int rt, int rb) FindCornerHubIndices(
+            IReadOnlyList<(Vector2 position, float population)> hubs)
+        {
+            if (hubs == null || hubs.Count < 2) return (-1, -1, -1, -1);
+
+            float centerX = 0f;
+            for (int i = 0; i < hubs.Count; i++)
+                centerX += hubs[i].position.x;
+            centerX /= hubs.Count;
+
+            int lt = -1, lb = -1, rt = -1, rb = -1;
+            float ltY = float.NegativeInfinity, lbY = float.PositiveInfinity;
+            float rtY = float.NegativeInfinity, rbY = float.PositiveInfinity;
+
+            for (int i = 0; i < hubs.Count; i++)
+            {
+                var p = hubs[i].position;
+                if (p.x < centerX)
+                {
+                    if (p.y > ltY) { ltY = p.y; lt = i; }
+                    if (p.y < lbY) { lbY = p.y; lb = i; }
+                }
+                else
+                {
+                    if (p.y > rtY) { rtY = p.y; rt = i; }
+                    if (p.y < rbY) { rbY = p.y; rb = i; }
+                }
+            }
+
+            return (lt, lb, rt, rb);
+        }
+
+        private static HashSet<long> BuildDefaultExcludedHubEdges(
+            IReadOnlyList<(Vector2 position, float population)> hubs)
+        {
+            var excluded = new HashSet<long>();
+            var (lt, lb, rt, rb) = FindCornerHubIndices(hubs);
+            AddExcludedHubEdge(excluded, lt, rt); // top chord
+            AddExcludedHubEdge(excluded, lb, rt); // BL → TR diagonal
+            AddExcludedHubEdge(excluded, lt, rb); // TL → BR diagonal
+            return excluded;
+        }
+
+        private static void AddExcludedHubEdge(HashSet<long> excluded, int a, int b)
+        {
+            if (excluded == null || a < 0 || b < 0 || a == b) return;
+            int lo = Mathf.Min(a, b);
+            int hi = Mathf.Max(a, b);
+            excluded.Add(((long)lo << 32) | (uint)hi);
+        }
+
+        private static bool IsExcludedHubEdge(int a, int b, HashSet<long> excluded)
+        {
+            if (excluded == null || excluded.Count == 0) return false;
+            int lo = Mathf.Min(a, b);
+            int hi = Mathf.Max(a, b);
+            return excluded.Contains(((long)lo << 32) | (uint)hi);
         }
 
         /// <summary>Generate transit stops along road edges using config values.</summary>
@@ -416,6 +559,47 @@ namespace CityTwin.Core
             int seed = stopsConfig?.seed ?? 1234;
 
             graph.GenerateStops(spacing, minNodeDist, minStopDist, jitter, removal, seed);
+
+            // Extensions beyond the hubs live in the renderer (visual, hand-editable polylines);
+            // sprinkle stops along them too so the whole drawn network is serviced, not just
+            // the hub-to-hub cores. Entry node = the hub the extension hangs off.
+            if (hubConnectionRenderer != null)
+            {
+                hubConnectionRenderer.GetHubLineSnapshots(_lineSnapshotScratch);
+                foreach (var s in _lineSnapshotScratch)
+                {
+                    int pairSeed = seed + s.HubMin * 131 + s.HubMax * 17;
+
+                    _extPathScratch.Clear();
+                    _extPathScratch.Add(s.EndMin);
+                    if (s.WpExtMin != null) _extPathScratch.AddRange(s.WpExtMin);
+                    _extPathScratch.Add(s.HubMinPos);
+                    graph.GenerateStopsAlongPath(_extPathScratch, s.HubMin,
+                        spacing, minNodeDist, minStopDist, jitter, removal, pairSeed + 1);
+
+                    _extPathScratch.Clear();
+                    _extPathScratch.Add(s.HubMaxPos);
+                    if (s.WpExtMax != null) _extPathScratch.AddRange(s.WpExtMax);
+                    _extPathScratch.Add(s.EndMax);
+                    graph.GenerateStopsAlongPath(_extPathScratch, s.HubMax,
+                        spacing, minNodeDist, minStopDist, jitter, removal, pairSeed + 2);
+                }
+            }
+        }
+
+        private readonly List<HubConnectionRenderer.HubLineSnapshot> _lineSnapshotScratch =
+            new List<HubConnectionRenderer.HubLineSnapshot>();
+        private readonly List<Vector2> _extPathScratch = new List<Vector2>();
+
+        /// <summary>
+        /// Road geometry (extensions/bends/endpoints) changed in the renderer — regenerate stops
+        /// so they cover the new layout, and refresh tile connections that cache stop indices.
+        /// </summary>
+        private void HandleRoadGeometryChanged()
+        {
+            if (configLoader == null || configLoader.Config == null) return;
+            GenerateTransitStops();
+            simulationEngine?.RefreshAllTileConnections();
         }
 
         private static int IndexOfHub(IReadOnlyList<ResidentialHubMono> list, ResidentialHubMono hub)
@@ -484,6 +668,22 @@ namespace CityTwin.Core
         private void OnTileUpdated(TilePose pose)
         {
             OnTileActivity?.Invoke();
+            // While the tutorial locks the table (start screen, guided steps after the first tile),
+            // updates are ignored — but remember where each tile sat, so the language-select tile
+            // doesn't instantly turn into a building the moment the placement gate opens.
+            if (tutorialSequence != null && tutorialSequence.TileEditsBlocked)
+            {
+                _parkedTilePositions[pose.TileId] = pose.Position;
+                return;
+            }
+            // A tile parked on the table before the gate opened only counts once the player actually
+            // moves it; placing a fresh tile works immediately. Same action either way.
+            if (_parkedTilePositions.TryGetValue(pose.TileId, out Vector2 parkedAt))
+            {
+                const float moveThreshold = 0.02f; // normalized TUIO units (~2% of the table)
+                if ((pose.Position - parkedAt).sqrMagnitude < moveThreshold * moveThreshold) return;
+                _parkedTilePositions.Remove(pose.TileId);
+            }
             if (simulationEngine == null) { Debug.LogWarning("[Coordinator] simulationEngine is null, skipping."); return; }
             placementOverlapValidator?.RefreshHubFootprints();
 
@@ -543,6 +743,8 @@ namespace CityTwin.Core
                 buildingSpawner?.SpawnBuilding(pose, overBudgetId);
                 buildingSpawner?.SetMarkerOverBudget(overBudgetId, true);
                 buildingSpawner?.SetMarkerConnectionState(overBudgetId, MarkerConnectionState.Inactive);
+                tutorialSequence?.ShowBudgetDepletedTip(); // robot explains; the tile just glows red
+                dashboard?.HighlightBudget(1f);            // and the budget readout blinks at the culprit
                 return;
             }
             if (price > 0) Budget -= price;
@@ -565,8 +767,27 @@ namespace CityTwin.Core
                 : candidateRadius;
             placementOverlapValidator?.UpsertTile(engineId, simPose.Position, placedRadius, false);
             placementOverlapValidator?.SetTileVisualInvalid(engineId, false);
+
+            // AddTile computed connections before the marker existed, but the connection range comes
+            // from the spawned marker's halo (HaloRadiusResolver) — re-evaluate now that it does, or
+            // the first placement of a building type shows as disconnected until it is moved.
+            simulationEngine.RefreshAllTileConnections();
             UpdateMarkerConnectionState(engineId, false);
 
+            simulationEngine.RecalculateMetrics();
+
+            // The halo rect only gets its real size after a layout pass, so the synchronous refresh
+            // above can still run with a stale radius on the very first spawn. One more pass next
+            // frame settles it — important during the tutorial, where follow-up updates are blocked.
+            StartCoroutine(DeferredConnectionRefresh(engineId));
+        }
+
+        private System.Collections.IEnumerator DeferredConnectionRefresh(string engineId)
+        {
+            yield return null; // let UI layout size the marker's halo
+            if (simulationEngine == null) yield break;
+            simulationEngine.RefreshAllTileConnections();
+            UpdateMarkerConnectionState(engineId, false);
             simulationEngine.RecalculateMetrics();
         }
 
@@ -591,6 +812,7 @@ namespace CityTwin.Core
         private void OnTileRemoved(string oscTileId)
         {
             OnTileActivity?.Invoke();
+            _parkedTilePositions.Remove(oscTileId); // lifted off the table: no longer parked
             if (simulationEngine == null) return;
             if (_oscToEngineTileId.TryGetValue(oscTileId, out string engineId))
             {

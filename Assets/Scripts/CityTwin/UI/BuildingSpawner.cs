@@ -32,6 +32,10 @@ namespace CityTwin.UI
         [SerializeField] private Vector2 markerPositionOffset = Vector2.zero;
 
         private readonly Dictionary<string, GameObject> _spawned = new Dictionary<string, GameObject>();
+        // Cosmetic scale multiplier applied to every placed marker (from config scoring.tileScale).
+        private float _tileScale = 1f;
+        private Vector3 _prefabBaseScale = Vector3.one;
+        private bool _capturedPrefabScale;
         // Halo multiplier is keyed by building size (Small/Medium/Large), shared across all buildings of that size.
         private readonly Dictionary<string, float> _debugHaloScaleBySize = new Dictionary<string, float>(System.StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _sizeByBuildingId = new Dictionary<string, string>();
@@ -118,12 +122,15 @@ namespace CityTwin.UI
             if (string.IsNullOrEmpty(engineTileId)) { Debug.LogWarning("[BuildingSpawner] engineTileId is empty."); return; }
             if (_spawned.ContainsKey(engineTileId)) return;
 
+            CapturePrefabScale();
             GameObject instance = Instantiate(buildingMarkerPrefab, contentRoot);
             instance.name = $"{pose.BuildingId}_{engineTileId}";
 
             Vector2 pos = pose.Position;
             if (flipY) pos.y = 1f - pos.y;
             Vector2 localPos = TuioToLocal(pos) + markerPositionOffset;
+
+            instance.transform.localScale = _prefabBaseScale * _tileScale;
 
             if (instance.transform is RectTransform rt)
             {
@@ -247,6 +254,29 @@ namespace CityTwin.UI
         {
             if (!string.IsNullOrEmpty(size) && _debugHaloScaleBySize.TryGetValue(size, out float v)) return v;
             return DebugHaloMultiplierDefault;
+        }
+
+        public const float TileScaleMin = 0.2f;
+        public const float TileScaleMax = 4f;
+
+        /// <summary>Cosmetic scale multiplier applied to every placed building tile/marker (config scoring.tileScale).</summary>
+        public float TileScale => _tileScale;
+
+        /// <summary>Set the tile visual scale and apply it live to every placed marker.</summary>
+        public void SetTileScale(float scale)
+        {
+            _tileScale = Mathf.Clamp(scale <= 0f ? 1f : scale, TileScaleMin, TileScaleMax);
+            CapturePrefabScale();
+            foreach (var kv in _spawned)
+                if (kv.Value != null)
+                    kv.Value.transform.localScale = _prefabBaseScale * _tileScale;
+        }
+
+        private void CapturePrefabScale()
+        {
+            if (_capturedPrefabScale || buildingMarkerPrefab == null) return;
+            _prefabBaseScale = buildingMarkerPrefab.transform.localScale;
+            _capturedPrefabScale = true;
         }
 
         /// <summary>Master halo multiplier applied on top of every per-size value.</summary>

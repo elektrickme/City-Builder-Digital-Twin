@@ -30,6 +30,27 @@ namespace CityTwin.UI
         [Tooltip("Optional: GameObject (e.g. a speech bubble) shown only when this building was placed but exceeds the available budget.")]
         [SerializeField] private GameObject overBudgetIndicator;
 
+        [Header("Halo pulse (secondary animation)")]
+        [Tooltip("Very slow breath on the halo radius + glow. Purely cosmetic — does not change connection reach.")]
+        [SerializeField] private bool haloPulse = true;
+        [Tooltip("Radius breath amount as a fraction. 0.06 = grows up to +6%.")]
+        [SerializeField] private float haloPulseAmount = 0.06f;
+        [Tooltip("Seconds for one full breath. Higher = slower.")]
+        [SerializeField] private float haloPulsePeriod = 6f;
+        [Tooltip("Halo glow alpha at the dim end of the breath (1 = no dimming).")]
+        [Range(0f, 1f)]
+        [SerializeField] private float haloPulseMinAlpha = 0.72f;
+
+        [Header("HDR glow (bloom)")]
+        [Tooltip("Add an HDR boost to the marker label and icon so the bloom post pass halos them.")]
+        [SerializeField] private bool glowLabelAndIcon = true;
+        [Tooltip("HDR multiplier for the label and icon.")]
+        [Range(1f, 6f)]
+        [SerializeField] private float labelGlowBoost = 1.8f;
+
+        private float _combinedHaloScale = 1f;
+        private float _pulsePhase;
+
         private static readonly Color DisconnectedColor = new Color(1f, 0f, 0.4f, 0.95f); // #ff0066
         private static readonly Color InactiveColor = new Color(0.4f, 0.4f, 0.4f, 0.95f);  // #666
 
@@ -45,12 +66,43 @@ namespace CityTwin.UI
         {
             EnsureReferences();
             if (overBudgetIndicator != null) overBudgetIndicator.SetActive(false);
+            _pulsePhase = Random.value * Mathf.PI * 2f; // desync markers so they don't breathe in unison
+
+            if (glowLabelAndIcon)
+            {
+                ApplyGlow(label);
+                ApplyGlow(icon);
+            }
+        }
+
+        private void ApplyGlow(UnityEngine.UI.Graphic g)
+        {
+            if (g == null || g.GetComponent<UIGlow>() != null) return;
+            var glow = g.gameObject.AddComponent<UIGlow>();
+            glow.glowBoost = labelGlowBoost;
+        }
+
+        private void Update()
+        {
+            if (!haloPulse || haloRoot == null) return;
+            float t = Time.time * (2f * Mathf.PI / Mathf.Max(0.1f, haloPulsePeriod)) + _pulsePhase;
+            float s01 = 0.5f + 0.5f * Mathf.Sin(t); // 0..1 smooth breath
+            float scale = _combinedHaloScale * (1f + haloPulseAmount * s01);
+            haloRoot.localScale = new Vector3(scale, scale, 1f);
+            // CanvasRenderer alpha is a post-multiply, independent of Image.color set by the state logic.
+            if (haloImage != null && haloImage.canvasRenderer != null)
+                haloImage.canvasRenderer.SetAlpha(Mathf.Lerp(haloPulseMinAlpha, 1f, s01));
         }
 
         public void SetOverBudget(bool isOverBudget)
         {
             if (overBudgetIndicator != null) overBudgetIndicator.SetActive(isOverBudget);
             if (!isOverBudget) return;
+
+            // The bubble sizes itself around its localized text; rebuild immediately so the very
+            // first visible frame is already laid out (no one-frame text spill).
+            foreach (var fitter in overBudgetIndicator.GetComponentsInChildren<UnityEngine.UI.ContentSizeFitter>(true))
+                UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(fitter.transform as RectTransform);
 
             // Budget overlay sits above the main building art; re-apply sprite/halo so the main image matches this building.
             EnsureReferences();
@@ -116,6 +168,7 @@ namespace CityTwin.UI
             }
 
             float combined = baseHaloScale * multiplier * _runtimeHaloMultiplier;
+            _combinedHaloScale = combined; // base for the pulse (Update layers the breath on top)
             if (haloRoot != null)
                 haloRoot.localScale = new Vector3(combined, combined, 1f);
 

@@ -67,7 +67,10 @@ namespace CityTwin.Localization
         {
             if (string.IsNullOrEmpty(key)) return "";
             if (_currentTable != null && _currentTable.TryGetValue(key, out string value))
-                return value;
+                // Config strings may carry literal "\n" escapes — sometimes double-escaped ("\\n")
+                // depending on how the JSON was authored. Collapse any run of backslashes before an
+                // 'n' into a real line break at the single display choke point.
+                return System.Text.RegularExpressions.Regex.Replace(value, @"\\+n", "\n");
             return key;
         }
 

@@ -1,4 +1,7 @@
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UI;
 using TMPro;
 using DG.Tweening;
 
@@ -33,32 +36,239 @@ namespace CityTwin.UI
         [Tooltip("Seconds for one half of the pulse (grow or shrink). Full breath = twice this.")]
         [SerializeField] private float pulseHalfPeriodSeconds = 0.6f;
 
+        [Header("Restart Status Glow")]
+        [Tooltip("Gentle HDR glow breath on the completion/restart message (nothing moves; brightness breathes and the bloom pass halos it).")]
+        [SerializeField] private bool glowRestartStatus = true;
+        [Tooltip("Glow at the dim end of the breath (must clear the bloom threshold, ~2.24, to be visible).")]
+        [SerializeField] private float statusGlowMin = 2.3f;
+        [Tooltip("Glow at the bright end of the breath.")]
+        [SerializeField] private float statusGlowMax = 2.9f;
+        [Tooltip("Seconds for one full breath (dim -> bright -> dim).")]
+        [SerializeField] private float statusGlowPeriod = 4f;
+
+        [Header("Completion Phase")]
+        [Tooltip("Seconds the scorecard (score, cards, band text) stays up before it gives way to the big completion message. The restart status text is hidden until then.")]
+        [SerializeField] private float scorecardSeconds = 12f;
+        [Tooltip("Card background alpha while the completion message shows, so the tiles on the table stay visible underneath (1 = opaque).")]
+        [Range(0.2f, 1f)] [SerializeField] private float completionBackgroundAlpha = 0.9f;
+        [Tooltip("The card's background image. Auto-resolved by name (\"Background\") when left empty.")]
+        [SerializeField] private Image cardBackground;
+
+        [Header("End Body Paragraph Cycle")]
+        [Tooltip("Freeze the end-report body to its first paragraph (the verdict). Pro-tip paragraphs are gameplay advice and stay off the final report. Overrides the cycle below.")]
+        [SerializeField] private bool freezeBodyToFirstParagraph = true;
+        [Tooltip("When the end body holds multiple paragraphs (blank-line separated), page through them one at a time instead of cramming everything into the box at an unreadable size.")]
+        [SerializeField] private bool cycleBodyParagraphs = true;
+        [Tooltip("Seconds each paragraph stays on screen before switching to the next.")]
+        [SerializeField] private float bodyParagraphSeconds = 5f;
+        [Tooltip("Fade seconds when paragraphs switch.")]
+        [SerializeField] private float bodyFadeSeconds = 0.35f;
+
         [Header("End Report Cards")]
         [Tooltip("Body text of the Balance card (feedback.* localization). Set by TutorialSequenceController.")]
         [SerializeField] private TextMeshProUGUI balanceBodyText;
         [Tooltip("Body text of the Strategic card (reaction.*.access.v2 localization). Set by TutorialSequenceController.")]
         [SerializeField] private TextMeshProUGUI strategicBodyText;
+        [Tooltip("Body text of the Budget card: remaining budget line. Set by TutorialSequenceController.")]
+        [SerializeField] private TextMeshProUGUI budgetBodyText;
 
         public bool IsVisible => endPanel != null && endPanel.activeSelf;
 
-        /// <summary>Activate the overlay and fill in the final title/body text. Clears any prior restart status.</summary>
+        /// <summary>Activate the overlay and fill in the final title/body text. Clears any prior restart status.
+        /// Starts in the scorecard phase; after <see cref="scorecardSeconds"/> the scorecard yields to the
+        /// big completion/restart message (see <see cref="CompletionPhaseRoutine"/>).</summary>
         public void Show(string title, string body)
         {
             if (endPanel != null) endPanel.SetActive(true);
             if (endTitleText != null) endTitleText.text = title ?? string.Empty;
-            if (endBodyText != null) endBodyText.text = body ?? string.Empty;
-            
+            SetBody(body ?? string.Empty);
+
             //Set QOL Score
             QOLText.text = Mathf.RoundToInt(_dashboardController.DisplayQol).ToString();
-            
+
             SetRestartStatus(string.Empty);
+            EnterScorecardPhase();
         }
 
         /// <summary>Hide the overlay and clear the restart status.</summary>
         public void Hide()
         {
+            StopBodyCycle();
+            StopCompletionPhase();
             if (endPanel != null) endPanel.SetActive(false);
             SetRestartStatus(string.Empty);
+        }
+
+        // ---- scorecard -> completion phase ----
+
+        private Coroutine _completionRoutine;
+        private List<GameObject> _scorecardElements;
+
+        /// <summary>Everything that belongs to the scorecard view: score, cards, band title/body.
+        /// Resolved from the serialized refs (card roots are the parents of their body texts); the
+        /// unreferenced "Your score" caption is picked up by name next to the score.</summary>
+        private List<GameObject> ScorecardElements()
+        {
+            if (_scorecardElements != null) return _scorecardElements;
+            _scorecardElements = new List<GameObject>();
+            void Add(Component c) { if (c != null) _scorecardElements.Add(c.gameObject); }
+            Add(QOLText);
+            Add(endTitleText);
+            Add(endBodyText);
+            if (balanceBodyText != null) Add(balanceBodyText.transform.parent);
+            if (strategicBodyText != null) Add(strategicBodyText.transform.parent);
+            if (budgetBodyText != null) Add(budgetBodyText.transform.parent);
+            if (QOLText != null && QOLText.transform.parent != null)
+            {
+                var caption = QOLText.transform.parent.Find("Your score Text");
+                if (caption != null) _scorecardElements.Add(caption.gameObject);
+            }
+            return _scorecardElements;
+        }
+
+        private float _cardBaseAlpha = -1f;
+
+        private Image CardBackground()
+        {
+            if (cardBackground == null && endPanel != null)
+            {
+                foreach (var img in endPanel.GetComponentsInChildren<Image>(true))
+                    if (img.name == "Background") { cardBackground = img; break; }
+            }
+            if (cardBackground != null && _cardBaseAlpha < 0f) _cardBaseAlpha = cardBackground.color.a;
+            return cardBackground;
+        }
+
+        private void SetCardAlpha(float a)
+        {
+            var bg = CardBackground();
+            if (bg == null) return;
+            var c = bg.color;
+            c.a = a;
+            bg.color = c;
+        }
+
+        private void EnterScorecardPhase()
+        {
+            StopCompletionPhase();
+            foreach (var go in ScorecardElements()) if (go != null) go.SetActive(true);
+            // The restart prompt stays out of sight while the player reads their results.
+            if (restartStatusText != null) restartStatusText.gameObject.SetActive(false);
+            // Inactive instances (the pooled quadrant clones) can't run coroutines and don't render
+            // anyway — leave them parked in the scorecard state instead of logging errors.
+            if (isActiveAndEnabled)
+                _completionRoutine = StartCoroutine(CompletionPhaseRoutine());
+        }
+
+        private IEnumerator CompletionPhaseRoutine()
+        {
+            yield return new WaitForSecondsRealtime(Mathf.Max(1f, scorecardSeconds));
+            StopBodyCycle();
+            // Scorecard makes way for the big completion message (the restart flow writes
+            // "session complete / clear the table" and the countdown into the status text).
+            // The card goes semi-transparent so players can find their tiles underneath.
+            foreach (var go in ScorecardElements()) if (go != null) go.SetActive(false);
+            if (restartStatusText != null) restartStatusText.gameObject.SetActive(true);
+            SetCardAlpha(completionBackgroundAlpha);
+            _completionRoutine = null;
+        }
+
+        private void StopCompletionPhase()
+        {
+            if (_completionRoutine != null) { StopCoroutine(_completionRoutine); _completionRoutine = null; }
+            if (restartStatusText != null) restartStatusText.gameObject.SetActive(true);
+            if (_cardBaseAlpha >= 0f) SetCardAlpha(_cardBaseAlpha); // back to the opaque scorecard
+        }
+
+        // ---- body paragraph cycle ----
+
+        private Coroutine _bodyCycle;
+        private List<string> _bodyParagraphs;
+        private float _bodyBaseAlpha = -1f;
+
+        /// <summary>Multi-paragraph bodies (summary + Pro-Tip) page one paragraph at a time so each
+        /// renders at a readable size; single-paragraph bodies are shown directly.</summary>
+        private void SetBody(string body)
+        {
+            StopBodyCycle();
+            if (endBodyText == null) return;
+
+            var paragraphs = new List<string>();
+            foreach (var p in System.Text.RegularExpressions.Regex.Split(body, @"\n\s*\n"))
+            {
+                string trimmed = p.Trim();
+                if (trimmed.Length > 0) paragraphs.Add(trimmed);
+            }
+
+            if (freezeBodyToFirstParagraph && paragraphs.Count > 0)
+            {
+                // Frozen report: just the verdict paragraph, auto-sized to the full box.
+                endBodyText.enableAutoSizing = true;
+                endBodyText.text = paragraphs[0];
+                return;
+            }
+
+            if (!cycleBodyParagraphs || paragraphs.Count <= 1 || !isActiveAndEnabled)
+            {
+                endBodyText.enableAutoSizing = true; // single text: let auto-size do its thing
+                endBodyText.text = body;
+                return;
+            }
+
+            // Pin one common font size for the whole cycle: auto-fit each paragraph, keep the
+            // smallest result. Otherwise short tips render bigger than long ones and the text
+            // visibly jumps in size on every switch.
+            float common = float.MaxValue;
+            endBodyText.enableAutoSizing = true;
+            foreach (var p in paragraphs)
+            {
+                endBodyText.text = p;
+                endBodyText.ForceMeshUpdate(true, true);
+                common = Mathf.Min(common, endBodyText.fontSize);
+            }
+            endBodyText.enableAutoSizing = false;
+            endBodyText.fontSize = common;
+
+            _bodyParagraphs = paragraphs;
+            if (_bodyBaseAlpha < 0f) _bodyBaseAlpha = endBodyText.color.a;
+            _bodyCycle = StartCoroutine(BodyCycleRoutine());
+        }
+
+        private void StopBodyCycle()
+        {
+            if (_bodyCycle != null) { StopCoroutine(_bodyCycle); _bodyCycle = null; }
+            if (endBodyText != null && _bodyBaseAlpha >= 0f) SetBodyAlpha(_bodyBaseAlpha);
+        }
+
+        private IEnumerator BodyCycleRoutine()
+        {
+            int i = 0;
+            while (true)
+            {
+                endBodyText.text = _bodyParagraphs[i % _bodyParagraphs.Count];
+                yield return FadeBody(0f, _bodyBaseAlpha);
+                yield return new WaitForSecondsRealtime(Mathf.Max(1f, bodyParagraphSeconds));
+                yield return FadeBody(_bodyBaseAlpha, 0f);
+                i++;
+            }
+        }
+
+        private IEnumerator FadeBody(float from, float to)
+        {
+            float d = Mathf.Max(0.01f, bodyFadeSeconds);
+            for (float t = 0f; t < d; t += Time.unscaledDeltaTime)
+            {
+                SetBodyAlpha(Mathf.Lerp(from, to, t / d));
+                yield return null;
+            }
+            SetBodyAlpha(to);
+        }
+
+        private void SetBodyAlpha(float a)
+        {
+            var c = endBodyText.color;
+            c.a = a;
+            endBodyText.color = c;
         }
 
         /// <summary>Update the restart status line (e.g. "Please remove all tiles" / "Restarting in 3...").
@@ -67,8 +277,16 @@ namespace CityTwin.UI
         {
             if (restartStatusText == null) return;
             restartStatusText.text = message ?? string.Empty;
-            if (!string.IsNullOrEmpty(message) && pulseRestartStatus) StartStatusPulse();
-            else StopStatusPulse();
+            if (!string.IsNullOrEmpty(message))
+            {
+                if (pulseRestartStatus) StartStatusPulse();
+                if (glowRestartStatus) StartStatusGlow();
+            }
+            else
+            {
+                StopStatusPulse();
+                StopStatusGlow();
+            }
         }
 
         private Tween _statusPulse;
@@ -101,9 +319,50 @@ namespace CityTwin.UI
                 restartStatusText.transform.localScale = _statusBaseScale;
         }
 
+        // ---- status glow breath ----
+
+        private Tween _statusGlow;
+        private UIGlow _statusGlowComp;
+
+        /// <summary>Slow HDR breath on the status text: brightness sweeps statusGlowMin..Max so the
+        /// bloom pass gives the message a living halo without any motion.</summary>
+        private void StartStatusGlow()
+        {
+            if (_statusGlow != null && _statusGlow.IsActive()) return; // already breathing
+
+            if (_statusGlowComp == null)
+            {
+                _statusGlowComp = restartStatusText.GetComponent<UIGlow>();
+                if (_statusGlowComp == null)
+                {
+                    _statusGlowComp = restartStatusText.gameObject.AddComponent<UIGlow>();
+                    _statusGlowComp.glowBoost = Mathf.Max(1f, statusGlowMin);
+                }
+            }
+
+            _statusGlowComp.GlowBoost = Mathf.Max(1f, statusGlowMin);
+            float half = Mathf.Max(0.25f, statusGlowPeriod * 0.5f);
+            _statusGlow = DOTween.To(() => _statusGlowComp.GlowBoost, v => _statusGlowComp.GlowBoost = v,
+                    Mathf.Max(statusGlowMax, statusGlowMin), half)
+                .SetEase(Ease.InOutSine)
+                .SetLoops(-1, LoopType.Yoyo)
+                .SetUpdate(true)
+                .SetTarget(_statusGlowComp);
+        }
+
+        private void StopStatusGlow()
+        {
+            if (_statusGlow != null) { _statusGlow.Kill(); _statusGlow = null; }
+            if (_statusGlowComp != null) _statusGlowComp.GlowBoost = _statusGlowComp.BaseGlowBoost;
+        }
+
         private void OnDisable()
         {
             StopStatusPulse();
+            StopStatusGlow();
+            // Coroutines die with the component; just restore the faded alpha.
+            _bodyCycle = null;
+            if (endBodyText != null && _bodyBaseAlpha >= 0f) SetBodyAlpha(_bodyBaseAlpha);
         }
 
         /// <summary>Fill the end-report card bodies (Balance, Strategic). QOL is rendered by <see cref="Show"/>;
@@ -112,6 +371,35 @@ namespace CityTwin.UI
         {
             if (balanceBodyText != null) balanceBodyText.text = balanceBody ?? string.Empty;
             if (strategicBodyText != null) strategicBodyText.text = strategicBody ?? string.Empty;
+            UnifyFontSizes(balanceBodyText, strategicBodyText, budgetBodyText);
+        }
+
+        /// <summary>Fill all three report cards, including the Budget card's remaining-budget line.</summary>
+        public void SetReport(string balanceBody, string strategicBody, string budgetBody)
+        {
+            if (budgetBodyText != null) budgetBodyText.text = budgetBody ?? string.Empty;
+            SetReport(balanceBody, strategicBody); // unifies sizes across all three cards
+        }
+
+        /// <summary>Auto-fit each text, then pin all to the smallest fitted size so sibling cards
+        /// read at one consistent size instead of each card picking its own.</summary>
+        private static void UnifyFontSizes(params TextMeshProUGUI[] texts)
+        {
+            float common = float.MaxValue;
+            foreach (var t in texts)
+            {
+                if (t == null || string.IsNullOrEmpty(t.text)) continue;
+                t.enableAutoSizing = true;
+                t.ForceMeshUpdate(true, true);
+                common = Mathf.Min(common, t.fontSize);
+            }
+            if (common == float.MaxValue) return;
+            foreach (var t in texts)
+            {
+                if (t == null) continue;
+                t.enableAutoSizing = false;
+                t.fontSize = common;
+            }
         }
     }
 }

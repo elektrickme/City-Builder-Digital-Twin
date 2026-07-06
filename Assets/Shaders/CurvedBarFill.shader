@@ -6,6 +6,7 @@ Shader "UI/CurvedBarFill"
         _Fill ("Fill Amount", Range(0, 1)) = 0.7
         _CapSize ("Cap Size", Range(0.0, 0.6)) = 0.05
         _Aspect ("Image Aspect (W/H)", Float) = 5.0
+        _GlowBoost ("HDR Glow Boost", Range(1, 6)) = 1
 
         _StencilComp ("Stencil Comp", Float) = 8
         _Stencil ("Stencil ID", Float) = 0
@@ -56,6 +57,7 @@ Shader "UI/CurvedBarFill"
             float _Fill;
             float _CapSize;
             float _Aspect;
+            float _GlowBoost;
 
             // Find the vertical center of the bar at a given X by sampling alpha
             float findBarCenter(float xPos)
@@ -113,6 +115,7 @@ Shader "UI/CurvedBarFill"
                 float mask = saturate(filled + capMask) * hasFill;
 
                 col.a *= mask;
+                col.rgb *= _GlowBoost; // > 1 = HDR: the bloom post pass turns this into a halo
 
                 return col;
             }

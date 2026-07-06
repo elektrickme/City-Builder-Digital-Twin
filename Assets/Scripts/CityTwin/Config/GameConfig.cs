@@ -121,6 +121,9 @@ namespace CityTwin.Config
             public float haloMultiplierSmall = 1f;
             public float haloMultiplierMedium = 1f;
             public float haloMultiplierLarge = 1f;
+            /// <summary>Visual scale multiplier applied to every placed building tile/marker.
+            /// Purely cosmetic (does not change scoring reach); 1 = prefab default.</summary>
+            public float tileScale = 1f;
             /// <summary>Pillar weight for per-hub QOL weighted average.</summary>
             public float qolWeightEnv = 1f;
             public float qolWeightEco = 1f;
@@ -139,6 +142,12 @@ namespace CityTwin.Config
             public float zoneRadius = 200f;
             /// <summary>Default connection radius for buildings that don't specify one (HTML: 500).</summary>
             public float defaultConnectionRadius = 500f;
+            /// <summary>0..1. Fraction of building connection lines (building→stop and building→hub) randomly
+            /// hidden to de-clutter a dense network. Purely visual; does not change scoring. 0 = show all.</summary>
+            public float connectionRemovalRate = 0f;
+            /// <summary>Seed for which connections the removal rate drops. Stable per seed, so the same rate
+            /// always hides the same connections.</summary>
+            public int connectionRemovalSeed = 4321;
         }
 
         [Serializable]
@@ -195,6 +204,9 @@ namespace CityTwin.Config
         {
             public string textKey;
             public float durationSeconds = 5f;
+            /// <summary>Optional choreography hook: "placementGate" (ripple hint + wait for first tile),
+            /// "scoreGlow" (QOL badge), "categoryGlow" (4 pillars in turn), "qolDemo" (QOL to max + timer glow).</summary>
+            public string action;
         }
 
         [Serializable]
