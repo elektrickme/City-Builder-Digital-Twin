@@ -26,11 +26,18 @@ namespace CityTwin.UI
         public Color cultureColor = new Color(1.00f, 0.18f, 0.70f, 1f);
         [Tooltip("Degrees of empty space between neighbouring sections. The gaps are part of the design - keep them readable.")]
         [Range(0f, 45f)] public float gapDegrees = 14f;
-        [Range(0.1f, 0.5f)] public float ringRadius = 0.42f;
-        [Tooltip("Half-thickness of the arc stroke in UV units.")]
-        [Range(0.005f, 0.1f)] public float thickness = 0.03f;
+
+        [Header("Geometry (pixels)")]
+        [Tooltip("Radius of the hub disc the ring wraps around.")]
+        public float hubDiscRadius = 80f;
+        [Tooltip("How far the arc centerline sits outside the hub disc edge (negative pulls it inside).")]
+        public float ringOffset = 8f;
+        [Tooltip("Stroke width of the arcs.")]
+        [Range(2f, 40f)] public float lineThickness = 12f;
         [Tooltip("Alpha of the faint full-length track behind each arc (0 = no track).")]
         [Range(0f, 1f)] public float trackAlpha = 0.16f;
+        [Tooltip("Quadrants below this fraction of the hub's strongest stat are hidden. Kills the cross-category 'leak' (buildings nudge neighbouring stats by ~25% of their primary) while letting genuinely developed stats show.")]
+        [Range(0f, 1f)] public float relativeCutoff = 0.35f;
         [Tooltip("Resting HDR multiplier. 1 = no glow at rest; the center blink pulse sweeps above the bloom threshold.")]
         [Range(1f, 6f)] public float glowBoost = 1f;
 
@@ -87,19 +94,50 @@ namespace CityTwin.UI
         private void ApplyProperties()
         {
             if (_matInstance == null) return;
-            _matInstance.SetFloat(FillAId, safetyFill);
-            _matInstance.SetFloat(FillBId, economyFill);
-            _matInstance.SetFloat(FillCId, environmentFill);
-            _matInstance.SetFloat(FillDId, cultureFill);
+
+            // Pixel-parametric geometry: the rect resizes around the arcs, and the shader's UV
+            // fractions are derived so offset/thickness read directly in pixels.
+            float arcRadius = Mathf.Max(1f, hubDiscRadius + ringOffset);
+            float rectSize = 2f * (arcRadius + lineThickness);
+            var rt = (RectTransform)transform;
+            if (!Mathf.Approximately(rt.sizeDelta.x, rectSize))
+                rt.sizeDelta = new Vector2(rectSize, rectSize);
+
+            // Dominance filter: a quadrant renders only when it holds a meaningful share of the
+            // hub's strongest stat. The tweened public fields stay raw; filtering is display-only.
+            float maxFill = Mathf.Max(Mathf.Max(safetyFill, economyFill), Mathf.Max(environmentFill, cultureFill));
+            float cut = maxFill * relativeCutoff;
+            _matInstance.SetFloat(FillAId, safetyFill >= cut ? safetyFill : 0f);
+            _matInstance.SetFloat(FillBId, economyFill >= cut ? economyFill : 0f);
+            _matInstance.SetFloat(FillCId, environmentFill >= cut ? environmentFill : 0f);
+            _matInstance.SetFloat(FillDId, cultureFill >= cut ? cultureFill : 0f);
             _matInstance.SetColor(ColorAId, safetyColor);
             _matInstance.SetColor(ColorBId, economyColor);
             _matInstance.SetColor(ColorCId, environmentColor);
             _matInstance.SetColor(ColorDId, cultureColor);
             _matInstance.SetFloat(GapId, gapDegrees);
-            _matInstance.SetFloat(RadiusId, ringRadius);
-            _matInstance.SetFloat(ThicknessId, thickness);
+            _matInstance.SetFloat(RadiusId, arcRadius / rectSize);
+            _matInstance.SetFloat(ThicknessId, lineThickness * 0.5f / rectSize);
             _matInstance.SetFloat(TrackId, trackAlpha);
             _matInstance.SetFloat(GlowId, GlowBoost);
+        }
+
+        /// <summary>Scene-view preview while tuning: hub disc (gray), arc centerline, and the
+        /// stroke's inner/outer bounds - live feedback without touching any material in edit mode.</summary>
+        private void OnDrawGizmosSelected()
+        {
+            var t = transform;
+            float scale = t.lossyScale.x;
+            float arcRadius = Mathf.Max(1f, hubDiscRadius + ringOffset) * scale;
+            float half = lineThickness * 0.5f * scale;
+
+            Gizmos.color = new Color(1f, 1f, 1f, 0.25f);
+            Gizmos.DrawWireSphere(t.position, hubDiscRadius * scale);
+            Gizmos.color = new Color(0.02f, 0.76f, 1f, 0.9f);
+            Gizmos.DrawWireSphere(t.position, arcRadius);
+            Gizmos.color = new Color(0.02f, 0.76f, 1f, 0.35f);
+            Gizmos.DrawWireSphere(t.position, arcRadius - half);
+            Gizmos.DrawWireSphere(t.position, arcRadius + half);
         }
 
         private void OnDestroy()
