@@ -4803,6 +4803,15 @@ MonoBehaviour:
   scorecardSeconds: 12
   completionBackgroundAlpha: 0.9
   cardBackground: {fileID: 0}
+  hideOnCompletion:
+  - {fileID: 7769113163038290453}
+  - {fileID: 8889983115932783409}
+  - {fileID: 4307824720736515043}
+  - {fileID: 4917295866912061097}
+  - {fileID: 7731324281859274675}
+  - {fileID: 4339213162362401064}
+  - {fileID: 5038858879967740940}
+  mapGraphic: {fileID: 4468903338420054050}
   freezeBodyToFirstParagraph: 1
   cycleBodyParagraphs: 1
   bodyParagraphSeconds: 5
@@ -9497,6 +9506,7 @@ MonoBehaviour:
   markerPrefab: {fileID: 3322005266591496291, guid: 050a21808db3a41089e05bc540a0ec45, type: 3}
   uiCamera: {fileID: 0}
   tableBounds: {fileID: 0}
+  clearZone: {fileID: 0}
   roadEditor: {fileID: 0}
   key1BuildingId: garden
   key2BuildingId: office
@@ -10671,7 +10681,7 @@ MonoBehaviour:
   metricSmoothTime: 0.3
   glowTopBar: 1
   topBarGlowBoost: 1
-  highlightScalePeak: 1.15
+  highlightScalePeak: 1.2
 --- !u!114 &8167690780928042416
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -10856,6 +10866,7 @@ MonoBehaviour:
   minBalancePraiseLevel: 20
   skipButton: {fileID: 0}
   revealOnGameStart: []
+  showPinsOnStartScreen: 1
   revealFadeSeconds: 1.4
   revealFadeDelay: 0.8
   rippleMarkerColor: {r: 0.35, g: 0.9, b: 1, a: 0.9}
@@ -11391,7 +11402,7 @@ MonoBehaviour:
   m_fontMaterials: []
   m_fontColor32:
     serializedVersion: 2
-    rgba: 4294967295
+    rgba: 4294885636
   m_fontColor: {r: 0.015686275, g: 0.75686276, b: 0.99607843, a: 1}
   m_enableVertexGradient: 0
   m_colorMode: 3

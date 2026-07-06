@@ -53,6 +53,14 @@ namespace CityTwin.UI
         [Range(0.2f, 1f)] [SerializeField] private float completionBackgroundAlpha = 0.9f;
         [Tooltip("The card's background image. Auto-resolved by name (\"Background\") when left empty.")]
         [SerializeField] private Image cardBackground;
+        [Tooltip("Level visuals switched off while the completion message shows, leaving only the placed-tile pins and the message. Hidden via CanvasGroup alpha, so no object lifecycles are touched.")]
+        [SerializeField] private GameObject[] hideOnCompletion;
+        [Tooltip("The map image itself. It parents the pins, so its component is disabled rather than alpha-fading the whole subtree.")]
+        [SerializeField] private Graphic mapGraphic;
+        [Tooltip("Seconds per fade stage of the end transition: (1) map+UI out / roads dim, (2) roads+particles out, (3) message up.")]
+        [SerializeField] private float completionFadeSeconds = 0.8f;
+        [Tooltip("Road network alpha during stage 1, before it fades out fully in stage 2.")]
+        [Range(0f, 1f)] [SerializeField] private float completionRoadDim = 0.4f;
 
         [Header("End Body Paragraph Cycle")]
         [Tooltip("Freeze the end-report body to its first paragraph (the verdict). Pro-tip paragraphs are gameplay advice and stay off the final report. Overrides the cycle below.")]
@@ -122,6 +130,10 @@ namespace CityTwin.UI
             {
                 var caption = QOLText.transform.parent.Find("Your score Text");
                 if (caption != null) _scorecardElements.Add(caption.gameObject);
+                // The report heading belongs to the scorecard too: on the completion screen only
+                // the pins and the clear-the-table message may remain.
+                var heading = QOLText.transform.parent.Find("Simulation Complete Text");
+                if (heading != null) _scorecardElements.Add(heading.gameObject);
             }
             return _scorecardElements;
         }
@@ -151,7 +163,12 @@ namespace CityTwin.UI
         private void EnterScorecardPhase()
         {
             StopCompletionPhase();
-            foreach (var go in ScorecardElements()) if (go != null) go.SetActive(true);
+            foreach (var go in ScorecardElements())
+            {
+                if (go == null) continue;
+                go.SetActive(true);
+                ResetGroup(go); // undo any half-finished fade from a previous transition
+            }
             // The restart prompt stays out of sight while the player reads their results.
             if (restartStatusText != null) restartStatusText.gameObject.SetActive(false);
             // Inactive instances (the pooled quadrant clones) can't run coroutines and don't render
@@ -160,24 +177,89 @@ namespace CityTwin.UI
                 _completionRoutine = StartCoroutine(CompletionPhaseRoutine());
         }
 
+        /// <summary>Staged end transition: (1) scorecard + map + UI fade out while the road network
+        /// dims, (2) roads and their flow particles fade away, (3) the clear-the-table message fades
+        /// up over the translucent card. Only the placed-tile pins survive all three stages.</summary>
         private IEnumerator CompletionPhaseRoutine()
         {
             yield return new WaitForSecondsRealtime(Mathf.Max(1f, scorecardSeconds));
             StopBodyCycle();
-            // Scorecard makes way for the big completion message (the restart flow writes
-            // "session complete / clear the table" and the countdown into the status text).
-            // The card goes semi-transparent so players can find their tiles underneath.
+            float stage = Mathf.Max(0.1f, completionFadeSeconds);
+
+            // Stage 1: scorecard and level UI fade out; the road network only dims for now.
+            foreach (var go in ScorecardElements()) FadeGroup(go, 0f, stage);
+            foreach (var go in hideOnCompletion)
+                FadeGroup(go, IsRoadHolder(go) ? completionRoadDim : 0f, stage);
+            yield return new WaitForSecondsRealtime(stage);
+
+            // Stage 2: the roads and their particles go too.
+            foreach (var go in hideOnCompletion)
+                if (IsRoadHolder(go)) FadeGroup(go, 0f, stage);
+            yield return new WaitForSecondsRealtime(stage);
+
+            // Stage 3: message fades up on the semi-transparent card.
             foreach (var go in ScorecardElements()) if (go != null) go.SetActive(false);
-            if (restartStatusText != null) restartStatusText.gameObject.SetActive(true);
             SetCardAlpha(completionBackgroundAlpha);
+            if (restartStatusText != null)
+            {
+                restartStatusText.gameObject.SetActive(true);
+                var cg = GetOrAddGroup(restartStatusText.gameObject);
+                DOTween.Kill(cg);
+                cg.alpha = 0f;
+                cg.DOFade(1f, stage).SetEase(Ease.InOutSine).SetUpdate(true).SetTarget(cg);
+            }
             _completionRoutine = null;
         }
 
         private void StopCompletionPhase()
         {
             if (_completionRoutine != null) { StopCoroutine(_completionRoutine); _completionRoutine = null; }
-            if (restartStatusText != null) restartStatusText.gameObject.SetActive(true);
+            if (restartStatusText != null)
+            {
+                restartStatusText.gameObject.SetActive(true);
+                ResetGroup(restartStatusText.gameObject);
+            }
             if (_cardBaseAlpha >= 0f) SetCardAlpha(_cardBaseAlpha); // back to the opaque scorecard
+            RestoreLevelVisuals();
+        }
+
+        // ---- completion fade helpers ----
+
+        private static bool IsRoadHolder(GameObject go)
+            => go != null && go.name.Contains("Connector Lines");
+
+        private static CanvasGroup GetOrAddGroup(GameObject go)
+        {
+            var cg = go.GetComponent<CanvasGroup>();
+            if (cg == null) cg = go.AddComponent<CanvasGroup>();
+            return cg;
+        }
+
+        private static void FadeGroup(GameObject go, float target, float seconds)
+        {
+            if (go == null) return;
+            var cg = GetOrAddGroup(go);
+            DOTween.Kill(cg);
+            cg.blocksRaycasts = target > 0.99f;
+            cg.DOFade(target, seconds).SetEase(Ease.InOutSine).SetUpdate(true).SetTarget(cg);
+        }
+
+        private static void ResetGroup(GameObject go)
+        {
+            if (go == null) return;
+            var cg = go.GetComponent<CanvasGroup>();
+            if (cg == null) return;
+            DOTween.Kill(cg);
+            cg.alpha = 1f;
+            cg.blocksRaycasts = true;
+        }
+
+        /// <summary>Instant restore of everything the staged fade touched (new session incoming).</summary>
+        private void RestoreLevelVisuals()
+        {
+            if (mapGraphic != null) mapGraphic.enabled = true;
+            if (hideOnCompletion == null) return;
+            foreach (var go in hideOnCompletion) ResetGroup(go);
         }
 
         // ---- body paragraph cycle ----

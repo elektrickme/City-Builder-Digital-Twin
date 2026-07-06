@@ -33,6 +33,8 @@ public class MouseBuildingTester : MonoBehaviour
     [SerializeField] private Camera uiCamera;
     [Tooltip("Optional fan-shaped table bounds. When set, releasing a dragged building outside the bounds discards it (removes it from the table).")]
     [SerializeField] private TableBounds tableBounds;
+    [Tooltip("Optional rectangular drop-to-clear zone. Releasing a dragged building inside it removes the building — more reliable than aiming outside the fan bounds. Auto-resolved.")]
+    [SerializeField] private ClearDropZone clearZone;
     [Tooltip("Optional road layout editor toggled from this menu. Tile input pauses while it is active.")]
     [SerializeField] private RoadNetworkEditor roadEditor;
 
@@ -119,6 +121,11 @@ public class MouseBuildingTester : MonoBehaviour
         if (tableArea == null) tableArea = GetComponentInChildren<RectTransform>(true);
         if (uiCamera == null) uiCamera = Camera.main;
         if (tableBounds == null) tableBounds = GetComponentInParent<TableBounds>(true);
+        if (clearZone == null)
+        {
+            var giRoot = GetComponentInParent<GameInstanceRoot>(true);
+            if (giRoot != null) clearZone = giRoot.GetComponentInChildren<ClearDropZone>(true);
+        }
         if (roadEditor == null)
         {
             roadEditor = GetComponentInParent<RoadNetworkEditor>(true);
@@ -193,10 +200,35 @@ public class MouseBuildingTester : MonoBehaviour
         if (mouse.leftButton.isPressed)
             OnMouseDrag(screenPos);
 
+        // Clear-zone feedback: armed while any building is dragged, hot while hovering the zone.
+        if (clearZone != null)
+        {
+            bool draggingNow = mouse.leftButton.isPressed && _dragging != null;
+            clearZone.SetState(draggingNow, draggingNow && clearZone.ContainsScreenPoint(screenPos, uiCamera));
+        }
+
+        // Out-of-board indicator: the dragged pin's halo turns red while it sits outside the
+        // fan bounds or over the clear zone — i.e. wherever releasing would discard it.
+        if (mouse.leftButton.isPressed && _dragging != null && _dragging.Marker != null)
+        {
+            bool wouldDiscard =
+                (clearZone != null && clearZone.ContainsScreenPoint(screenPos, uiCamera)) ||
+                (tableBounds != null && !tableBounds.ContainsWorld(_dragging.Marker.position));
+            var display = _dragging.Marker.GetComponent<BuildingMarkerDisplay>();
+            if (display != null) display.SetPlacementInvalid(wouldDiscard, DiscardIndicatorColor);
+        }
+
         if (mouse.leftButton.wasReleasedThisFrame)
         {
+            // Dropped on the clear zone → remove the building (checked first: it is the reliable,
+            // explicit affordance; the fan-bounds test below stays as the fallback).
+            if (_dragging != null && clearZone != null &&
+                clearZone.ContainsScreenPoint(screenPos, uiCamera))
+            {
+                RemoveActiveTile(_dragging);
+            }
             // Dropped outside the fan-shaped table bounds → discard the building.
-            if (_dragging != null && tableBounds != null && _dragging.Marker != null &&
+            else if (_dragging != null && tableBounds != null && _dragging.Marker != null &&
                 !tableBounds.ContainsWorld(_dragging.Marker.position))
             {
                 RemoveActiveTile(_dragging);
@@ -209,9 +241,18 @@ public class MouseBuildingTester : MonoBehaviour
             {
                 RemoveActiveTile(_dragging);
             }
+            // Kept on the board: clear the red discard indicator.
+            if (_dragging != null && _dragging.Marker != null)
+            {
+                var display = _dragging.Marker.GetComponent<BuildingMarkerDisplay>();
+                if (display != null) display.SetPlacementInvalid(false, DiscardIndicatorColor);
+            }
             _dragging = null;
         }
     }
+
+    /// <summary>Halo tint while a dragged pin hovers a discard area (outside the fan / clear zone).</summary>
+    private static readonly Color DiscardIndicatorColor = new Color(1f, 0.12f, 0.3f, 0.95f);
 
     private void OnMouseDown(Vector2 screenPos)
     {

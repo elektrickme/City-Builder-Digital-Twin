@@ -42,8 +42,18 @@ public class DashboardController : MonoBehaviour
     [SerializeField] private bool glowTopBar = true;
     [Tooltip("Resting HDR multiplier for top-bar texts and icons. 1 = no glow at rest; the tutorial highlight pulses still sweep well above 1.")]
     [Range(1f, 6f)] [SerializeField] private float topBarGlowBoost = 1f;
-    [Tooltip("Scale the highlighted element reaches at the top of a tutorial flash (1.15 = +15%). 1 = no scaling.")]
-    [Range(1f, 1.5f)] [SerializeField] private float highlightScalePeak = 1.15f;
+
+    [Header("Tutorial highlight")]
+    [Tooltip("HDR multiplier at the top of a highlight flash. Bloom threshold is ~2.24, so higher = stronger halo.")]
+    [Range(2.3f, 8f)] [SerializeField] private float highlightGlowPeak = 2.5f;
+    [Tooltip("Scale the highlighted element reaches at the top of a tutorial flash (1.2 = +20%). 1 = no scaling.")]
+    [Range(1f, 1.5f)] [SerializeField] private float highlightScalePeak = 1.2f;
+    [Tooltip("Rise time as a fraction of the step's highlight duration.")]
+    [Range(0.1f, 1f)] [SerializeField] private float highlightRiseFraction = 0.4f;
+    [Tooltip("Hold at full brightness/size, as a fraction of the duration.")]
+    [Range(0f, 1f)] [SerializeField] private float highlightHoldFraction = 0.3f;
+    [Tooltip("Settle time as a fraction of the duration.")]
+    [Range(0.1f, 1.5f)] [SerializeField] private float highlightFallFraction = 0.6f;
 
     private float _displayQol;
     public float DisplayQol => _displayQol;
@@ -246,10 +256,12 @@ public class DashboardController : MonoBehaviour
 
         target.DOKill(false);
         target.localScale = baseScale;
-        float rise = Mathf.Max(0.2f, seconds * 0.35f);
-        float fall = Mathf.Max(0.3f, seconds * 0.65f);
+        float rise = Mathf.Max(0.35f, seconds * highlightRiseFraction);
+        float hold = Mathf.Max(0.2f, seconds * highlightHoldFraction);
+        float fall = Mathf.Max(0.5f, seconds * highlightFallFraction);
         DOTween.Sequence().SetTarget(target).SetUpdate(true)
             .Append(target.DOScale(baseScale * highlightScalePeak, rise).SetEase(Ease.OutQuad))
+            .AppendInterval(hold)
             .Append(target.DOScale(baseScale, fall).SetEase(Ease.InOutSine))
             .OnKill(() => { if (target != null) target.localScale = baseScale; });
     }
@@ -334,16 +346,18 @@ public class DashboardController : MonoBehaviour
     };
 
     private static Shader _glowShader;
-    private const float GlowPeak = 3f; // HDR multiplier at the top of the pulse — must clear the bloom threshold (~2.24) with headroom
 
     /// <summary>Tutorial highlight: a proper glow pass. Images/bars get an HDR intensity sweep
     /// above 1 so the bloom post pass halos them; text glows to white (TMP vertex colors clamp
-    /// at 1, so material boost doesn't apply there). Nothing moves or scales.</summary>
-    private static void FlashGraphics(Transform target, float seconds)
+    /// at 1, so material boost doesn't apply there). Timing/strength come from the
+    /// "Tutorial highlight" inspector sliders.</summary>
+    private void FlashGraphics(Transform target, float seconds)
     {
         if (_glowShader == null) _glowShader = Shader.Find("CityTwin/UI/GlowBoost");
-        float rise = Mathf.Max(0.2f, seconds * 0.35f);
-        float fall = Mathf.Max(0.3f, seconds * 0.65f);
+        // Slow, readable sweep: rise, HOLD at full brightness, then a long settle.
+        float rise = Mathf.Max(0.35f, seconds * highlightRiseFraction);
+        float hold = Mathf.Max(0.2f, seconds * highlightHoldFraction);
+        float fall = Mathf.Max(0.5f, seconds * highlightFallFraction);
 
         // Graphics that already have an HDR glow knob (fill bars, ring, UIGlow texts/icons) pulse
         // that in place so their shader keeps working during the highlight. Swapping materials
@@ -354,7 +368,7 @@ public class DashboardController : MonoBehaviour
             if (!(mb is IGlowBoost boost)) continue;
             if (mb is UIGlow ug) glowOwned.Add(ug.GetComponent<Graphic>());
             else foreach (var img in mb.GetComponentsInChildren<RawImage>(true)) glowOwned.Add(img);
-            PulseGlowBoost(mb, boost, rise, fall);
+            PulseGlowBoost(mb, boost, rise, hold, fall);
         }
 
         foreach (var g in target.GetComponentsInChildren<Graphic>(true))
@@ -384,7 +398,7 @@ public class DashboardController : MonoBehaviour
             }
             else if (_glowShader != null)
             {
-                GlowPulse(g, rise, fall);
+                GlowPulse(g, rise, hold, fall);
             }
         }
     }
@@ -392,21 +406,22 @@ public class DashboardController : MonoBehaviour
     /// <summary>Sweep an IGlowBoost graphic's HDR multiplier base → peak → base on its own
     /// material. The component keeps writing the value every frame, so the tween drives the
     /// component property, not the material directly.</summary>
-    private static void PulseGlowBoost(MonoBehaviour owner, IGlowBoost boost, float rise, float fall)
+    private void PulseGlowBoost(MonoBehaviour owner, IGlowBoost boost, float rise, float hold, float fall)
     {
         owner.DOKill(false);
         float baseVal = boost.BaseGlowBoost;
-        float peak = Mathf.Max(GlowPeak, baseVal * 1.5f);
+        float peak = Mathf.Max(highlightGlowPeak, baseVal * 1.5f);
         boost.GlowBoost = baseVal;
         DOTween.Sequence().SetTarget(owner).SetUpdate(true)
             .Append(DOTween.To(() => boost.GlowBoost, v => boost.GlowBoost = v, peak, rise).SetEase(Ease.OutQuad))
+            .AppendInterval(hold)
             .Append(DOTween.To(() => boost.GlowBoost, v => boost.GlowBoost = v, baseVal, fall).SetEase(Ease.InOutSine))
             .OnComplete(() => boost.GlowBoost = baseVal)
             .OnKill(() => boost.GlowBoost = baseVal);
     }
 
     /// <summary>Swap in the HDR-boost material, sweep intensity 1 → peak → 1, then restore.</summary>
-    private static void GlowPulse(Graphic g, float rise, float fall)
+    private void GlowPulse(Graphic g, float rise, float hold, float fall)
     {
         Material original = g.material;
         var glow = new Material(_glowShader);
@@ -414,7 +429,8 @@ public class DashboardController : MonoBehaviour
         g.material = glow;
 
         DOTween.Sequence().SetTarget(glow).SetUpdate(true)
-            .Append(DOTween.To(() => glow.GetFloat("_GlowBoost"), v => glow.SetFloat("_GlowBoost", v), GlowPeak, rise).SetEase(Ease.OutQuad))
+            .Append(DOTween.To(() => glow.GetFloat("_GlowBoost"), v => glow.SetFloat("_GlowBoost", v), highlightGlowPeak, rise).SetEase(Ease.OutQuad))
+            .AppendInterval(hold)
             .Append(DOTween.To(() => glow.GetFloat("_GlowBoost"), v => glow.SetFloat("_GlowBoost", v), 1f, fall).SetEase(Ease.InOutSine))
             .OnComplete(() =>
             {

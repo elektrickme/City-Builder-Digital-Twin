@@ -62,6 +62,15 @@ namespace CityTwin.UI
         /// <summary>0..1 fade used by the round-intro reveal (particles are the last beat). 1 = fully visible.</summary>
         public float RevealFade { get; set; } = 1f;
 
+        /// <summary>Extra size multiplier on every particle. The tutorial cranks this for eye candy
+        /// while the table is locked; 1 = normal.</summary>
+        public float EyeCandySize { get; set; } = 1f;
+
+        /// <summary>Floor on the activity level. The tutorial sets this to make the empty city flow
+        /// at full size/speed instead of the sleepy empty-city look; 0 = no floor. Values above 1
+        /// over-drive size and speed beyond the fully-built-city maximum.</summary>
+        public float ActivityFloor { get; set; }
+
         private SimulationEngine _engine;
         private float _activity; // 0 = empty city, 1 = fully built up
         private float _flowTime; // activity-scaled clock so speed changes never teleport particles
@@ -97,8 +106,9 @@ namespace CityTwin.UI
                 ? Mathf.Clamp01((float)_engine.TileStates.Count / buildingsForFullActivity)
                 : 1f;
             _activity = Mathf.MoveTowards(_activity, target, Time.deltaTime * 0.5f);
+            float effectiveActivity = Mathf.Max(_activity, Mathf.Max(0f, ActivityFloor));
             if (Application.isPlaying)
-                _flowTime += Time.deltaTime * Mathf.Lerp(emptyCitySpeedScale, 1f, _activity);
+                _flowTime += Time.deltaTime * Mathf.LerpUnclamped(emptyCitySpeedScale, 1f, effectiveActivity);
 
             if (inheritLineColor && _parentLine != null)
             {
@@ -126,7 +136,8 @@ namespace CityTwin.UI
             baseColor.a *= Mathf.Clamp01(RevealFade);
             if (baseColor.a <= 0.001f) return;
 
-            float sizeScale = Mathf.Lerp(emptyCitySizeScale, 1f, _activity);
+            float sizeScale = Mathf.LerpUnclamped(emptyCitySizeScale, 1f, Mathf.Max(_activity, Mathf.Max(0f, ActivityFloor)))
+                              * Mathf.Max(0.1f, EyeCandySize);
 
             for (int i = 0; i < count; i++)
             {

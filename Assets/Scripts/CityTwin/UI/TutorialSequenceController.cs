@@ -125,6 +125,8 @@ namespace CityTwin.UI
         [SerializeField] private GameObject skipButton;
         [Tooltip("UI hidden on the start screen (building palette pins etc.) and slowly faded in when the round begins.")]
         [SerializeField] private CanvasGroup[] revealOnGameStart;
+        [Tooltip("Keep the palette pins visible (but inert) on the start screen instead of hiding them until the round begins.")]
+        [SerializeField] private bool showPinsOnStartScreen = true;
         [SerializeField] private float revealFadeSeconds = 1.4f;
         [SerializeField] private float revealFadeDelay = 0.8f;
 
@@ -262,16 +264,25 @@ namespace CityTwin.UI
                 {
                     if (cg == null) continue;
                     DOTween.Kill(cg);
-                    cg.alpha = 0f;
                     cg.blocksRaycasts = true;
-                    cg.DOFade(1f, revealFadeSeconds).SetDelay(revealFadeDelay).SetEase(Ease.InOutSine).SetUpdate(true).SetTarget(cg);
+                    if (showPinsOnStartScreen)
+                    {
+                        cg.alpha = 1f; // pins were already visible on the welcome screen
+                    }
+                    else
+                    {
+                        cg.alpha = 0f;
+                        cg.DOFade(1f, revealFadeSeconds).SetDelay(revealFadeDelay).SetEase(Ease.InOutSine).SetUpdate(true).SetTarget(cg);
+                    }
                 }
             }
 
+            SetTutorialEyeCandy(true); // roads dim, particles play big while the table is locked
             _sequenceRoutine = StartCoroutine(RunSequence(0));
         }
 
-        /// <summary>Hide the game-start UI (palette pins, skip) — called while the start screen owns the stage.</summary>
+        /// <summary>Hide the game-start UI (palette pins, skip) — called while the start screen owns
+        /// the stage. With showPinsOnStartScreen the pins stay visible but inert instead.</summary>
         private void HideGameStartUi()
         {
             if (revealOnGameStart != null)
@@ -280,7 +291,7 @@ namespace CityTwin.UI
                 {
                     if (cg == null) continue;
                     DOTween.Kill(cg);
-                    cg.alpha = 0f;
+                    cg.alpha = showPinsOnStartScreen ? 1f : 0f;
                     cg.blocksRaycasts = false;
                 }
             }
@@ -293,6 +304,7 @@ namespace CityTwin.UI
             _isRunning = false;
             StopRippleHint();
             RestoreRevealVisuals();
+            SetTutorialEyeCandy(false);
             if (skipButton != null) skipButton.SetActive(false);
             HideGameStartUi(); // back to the start screen: pins hide until the next round begins
             TileEditsBlocked = true; // back to the start screen: the table locks for the next round
@@ -427,6 +439,7 @@ namespace CityTwin.UI
             _isRunning = false;
             _sequenceRoutine = null;
             StopRippleHint();
+            SetTutorialEyeCandy(false); // roads back to full, particles back to city-driven
             if (skipButton != null) skipButton.SetActive(false);
             TileEditsBlocked = false;
             sessionTimer?.SetPaused(false); // the game is on — clock starts now
@@ -521,6 +534,77 @@ namespace CityTwin.UI
 
         [Tooltip("HDR glow peak the city centers reach at the top of a life-sign pulse (must clear the bloom threshold, ~2.24).")]
         [SerializeField] private float centerPulseGlowPeak = 3f;
+
+        [Header("Tutorial eye candy")]
+        [Tooltip("Road network alpha while the tutorial talks (the table is locked, so the flow particles carry the show). Restored to 1 when the round opens.")]
+        [Range(0.05f, 1f)] [SerializeField] private float tutorialRoadDim = 0.35f;
+        [Tooltip("Flow particle size multiplier during the tutorial.")]
+        [SerializeField] private float tutorialParticleSize = 1.6f;
+        [Tooltip("Particles behave as if the city were this built-up during the tutorial. 1 = fully built city; above 1 over-drives size and speed beyond the normal maximum.")]
+        [Range(0f, 10f)] [SerializeField] private float tutorialParticleActivity = 1f;
+        [Tooltip("Seconds before the road dim kicks in, so it never fights the round-intro reveal fade.")]
+        [SerializeField] private float roadDimDelay = 4f;
+        [Tooltip("Map background brightness while the table is locked during the tutorial (1 = no dim). Brightens the moment placements are allowed, so the dim doubles as a 'may I place?' signal.")]
+        [Range(0.1f, 1f)] [SerializeField] private float tutorialMapDim = 0.45f;
+        [Tooltip("The map background image that gets dimmed. Auto-resolved (the Sector_0 RawImage) when empty.")]
+        [SerializeField] private Graphic tutorialMapGraphic;
+
+        private bool _mapDimmed;
+
+        /// <summary>Dim tracks the table lock: dark while TileEditsBlocked during the tutorial,
+        /// full brightness whenever the player may place. Polled cheaply from LateUpdate.</summary>
+        private void UpdateMapDim()
+        {
+            bool want = _isRunning && TileEditsBlocked;
+            if (want == _mapDimmed) return;
+            _mapDimmed = want;
+
+            var g = ResolveMapGraphic();
+            if (g == null) return;
+            DOTween.Kill(g);
+            float v = want ? tutorialMapDim : 1f;
+            g.DOColor(new Color(v, v, v, g.color.a), 0.8f).SetEase(Ease.InOutSine).SetUpdate(true).SetTarget(g);
+        }
+
+        private Graphic ResolveMapGraphic()
+        {
+            if (tutorialMapGraphic != null) return tutorialMapGraphic;
+            // "Main BG" carries the map art (HubLayoutManager assigns the background sprite to it);
+            // Sector_0 is just a black backdrop, so dimming that would be invisible.
+            foreach (var g in GetComponentsInChildren<Image>(true))
+                if (g.name == "Main BG") { tutorialMapGraphic = g; break; }
+            return tutorialMapGraphic;
+        }
+
+        private void LateUpdate()
+        {
+            UpdateMapDim();
+        }
+
+        /// <summary>Dim the roads and let the flow particles play big while the table is locked.
+        /// Everything restores to normal the moment the round opens (finish, skip, or stop).</summary>
+        private void SetTutorialEyeCandy(bool on)
+        {
+            var holder = connectionRenderer != null ? connectionRenderer.RoadHolder : null;
+            if (holder != null)
+            {
+                var cg = holder.GetComponent<CanvasGroup>();
+                if (cg == null) cg = holder.gameObject.AddComponent<CanvasGroup>();
+                DOTween.Kill(cg);
+                cg.DOFade(on ? tutorialRoadDim : 1f, 0.8f)
+                  .SetDelay(on ? roadDimDelay : 0f)
+                  .SetEase(Ease.InOutSine)
+                  .SetUpdate(true)
+                  .SetTarget(cg);
+            }
+
+            foreach (var p in GetComponentsInChildren<ConnectionFlowParticles>(true))
+            {
+                if (p == null) continue;
+                p.EyeCandySize = on ? tutorialParticleSize : 1f;
+                p.ActivityFloor = on ? tutorialParticleActivity : 0f;
+            }
+        }
 
         /// <summary>Quick life-sign across the map: every hub does a small staggered scale pop and
         /// kicks a gentle ripple into the liquid surface. Used on tutorial step changes.</summary>

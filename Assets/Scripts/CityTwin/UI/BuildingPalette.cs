@@ -36,7 +36,11 @@ namespace CityTwin.UI
         [Tooltip("Ids hidden from the tray when showing the full catalog. Museum is hidden by default because it currently reuses the circus art (no museum sprite exists yet).")]
         [SerializeField] private string[] excludedBuildingIds = { "museum" };
 
-        [Header("Layout — two corner clusters")]
+        [Header("Layout — hand-placed pin anchors")]
+        [Tooltip("One anchor per pin, in catalog order. Pins and their slot placeholders are parented to these, so each pin can be arranged individually in the viewport. Leave empty to fall back to the corner-cluster grid below.")]
+        [SerializeField] private RectTransform[] pinAnchors;
+
+        [Header("Layout — two corner clusters (fallback)")]
         [Tooltip("Center of the left tile cluster in palette local space (palette sits at canvas center).")]
         [SerializeField] private Vector2 leftClusterCenter = new Vector2(-1055f, 545f);
         [SerializeField] private Vector2 rightClusterCenter = new Vector2(1055f, 545f);
@@ -109,15 +113,24 @@ namespace CityTwin.UI
             }
             if (defs.Count == 0) return;
 
-            // First half in the left corner cluster, second half in the right.
+            // Hand-placed anchors win; the corner-cluster grid is the fallback.
             int leftCount = (defs.Count + 1) / 2;
             for (int i = 0; i < defs.Count; i++)
             {
+                RectTransform anchor = pinAnchors != null && i < pinAnchors.Length ? pinAnchors[i] : null;
+                if (anchor != null)
+                {
+                    CreateSlotPlaceholder(Vector2.zero, anchor); // created first so it renders behind the pin
+                    _items.Add(CreateItem(defs[i], Vector2.zero, anchor));
+                    continue;
+                }
+
                 bool onLeft = i < leftCount;
                 int idx = onLeft ? i : i - leftCount;
                 int total = onLeft ? leftCount : defs.Count - leftCount;
                 Vector2 pos = ClusterPosition(onLeft ? leftClusterCenter : rightClusterCenter, idx, total);
-                _items.Add(CreateItem(defs[i], pos));
+                CreateSlotPlaceholder(pos, (RectTransform)transform);
+                _items.Add(CreateItem(defs[i], pos, (RectTransform)transform));
             }
         }
 
@@ -149,11 +162,57 @@ namespace CityTwin.UI
             return null;
         }
 
-        private GameObject CreateItem(BuildingDefinition def, Vector2 anchoredPos)
+        // ── slot placeholders ──
+
+        [Header("Slot placeholders")]
+        [Tooltip("Outlined slot behind each pin's home position, so the spot stays readable while the pin is dragged away (and marks where physical tiles rest in the real game).")]
+        [SerializeField] private bool showSlotPlaceholders = true;
+        [Tooltip("Extra size around the pin, in pixels.")]
+        [SerializeField] private float slotPadding = 8f;
+        [Range(0f, 1f)]
+        [SerializeField] private float slotAlpha = 0.3f;
+        [SerializeField] private Color slotColor = new Color(0x04 / 255f, 0xC1 / 255f, 0xFE / 255f, 1f);
+
+        private Material _slotMaterial;
+
+        private void CreateSlotPlaceholder(Vector2 anchoredPos, RectTransform parent)
+        {
+            if (!showSlotPlaceholders) return;
+
+            float size = itemSize + slotPadding * 2f;
+            if (_slotMaterial == null)
+            {
+                var shader = Shader.Find("CityTwin/UI/RectOutline");
+                if (shader == null) return;
+                _slotMaterial = new Material(shader);
+                _slotMaterial.SetVector("_RectSize", new Vector4(size, size, 0f, 0f));
+                _slotMaterial.SetFloat("_CornerRadius", size * 0.22f);
+                _slotMaterial.SetFloat("_Thickness", 3f);
+            }
+
+            var go = new GameObject("Slot", typeof(RectTransform));
+            var rt = (RectTransform)go.transform;
+            rt.SetParent(parent != null ? parent : (RectTransform)transform, false);
+            rt.sizeDelta = new Vector2(size, size);
+            rt.anchoredPosition = anchoredPos;
+            var img = go.AddComponent<Image>();
+            img.material = _slotMaterial;
+            img.raycastTarget = false;
+            img.color = new Color(slotColor.r, slotColor.g, slotColor.b, slotAlpha);
+
+            _items.Add(go); // cleared together with the pins on every rebuild
+        }
+
+        private void OnDestroy()
+        {
+            if (_slotMaterial != null) Destroy(_slotMaterial);
+        }
+
+        private GameObject CreateItem(BuildingDefinition def, Vector2 anchoredPos, RectTransform parent)
         {
             var go = new GameObject("Palette_" + def.Id, typeof(RectTransform));
             var rt = (RectTransform)go.transform;
-            rt.SetParent(transform, false);
+            rt.SetParent(parent != null ? parent : (RectTransform)transform, false);
             rt.sizeDelta = new Vector2(itemSize, itemSize);
             rt.anchoredPosition = anchoredPos;
 

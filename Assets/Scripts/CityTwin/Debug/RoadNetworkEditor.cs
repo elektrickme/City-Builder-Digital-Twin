@@ -49,7 +49,13 @@ public class RoadNetworkEditor : MonoBehaviour
         public List<SavedWaypoint> waypoints = new List<SavedWaypoint>();
     }
 
-    private string SavePath
+    /// <summary>All game instances share one layout file: the quadrants are copies of the same
+    /// map, and the old per-instance naming (road_layout_&lt;GameObject name&gt;.json) meant a layout
+    /// edited on instance 1 never reached the other three copies.</summary>
+    private static string SharedPath => Path.Combine(Application.streamingAssetsPath, "road_layout.json");
+
+    /// <summary>Legacy per-instance file name, kept for migration of existing layouts.</summary>
+    private string LegacyInstancePath
     {
         get
         {
@@ -58,6 +64,26 @@ public class RoadNetworkEditor : MonoBehaviour
             safe = safe.Replace(' ', '_');
             return Path.Combine(Application.streamingAssetsPath, "road_layout_" + safe + ".json");
         }
+    }
+
+    /// <summary>Where to load from: the shared file when present, otherwise this instance's legacy
+    /// file, otherwise ANY legacy road_layout_*.json (all quadrants share the same map, so the
+    /// first instance's old file is a valid layout for every copy).</summary>
+    private string ResolveLoadPath()
+    {
+        if (File.Exists(SharedPath)) return SharedPath;
+        if (File.Exists(LegacyInstancePath)) return LegacyInstancePath;
+        try
+        {
+            var candidates = Directory.GetFiles(Application.streamingAssetsPath, "road_layout_*.json");
+            if (candidates.Length > 0)
+            {
+                System.Array.Sort(candidates);
+                return candidates[0];
+            }
+        }
+        catch { /* StreamingAssets may be unreadable on some platforms; fall through */ }
+        return null;
     }
 
     private void Awake()
@@ -130,11 +156,18 @@ public class RoadNetworkEditor : MonoBehaviour
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(SavePath));
-            File.WriteAllText(SavePath, JsonUtility.ToJson(data, true));
+            Directory.CreateDirectory(Path.GetDirectoryName(SharedPath));
+            File.WriteAllText(SharedPath, JsonUtility.ToJson(data, true));
+            // The shared file supersedes this instance's legacy file; remove it so it can never
+            // shadow the shared layout on future loads.
+            if (File.Exists(LegacyInstancePath))
+            {
+                File.Delete(LegacyInstancePath);
+                if (File.Exists(LegacyInstancePath + ".meta")) File.Delete(LegacyInstancePath + ".meta");
+            }
             _statusOk = true;
-            _status = $"Saved: {data.hubs.Count} hubs, {data.extensions.Count} ends, {data.waypoints.Count} bends";
-            Debug.Log("[RoadNetworkEditor] Saved road layout: " + SavePath);
+            _status = $"Saved (shared, all instances): {data.hubs.Count} hubs, {data.extensions.Count} ends, {data.waypoints.Count} bends";
+            Debug.Log("[RoadNetworkEditor] Saved shared road layout: " + SharedPath);
         }
         catch (System.Exception e)
         {
@@ -146,11 +179,12 @@ public class RoadNetworkEditor : MonoBehaviour
 
     public void LoadAndApply()
     {
-        if (!File.Exists(SavePath)) return;
+        string loadPath = ResolveLoadPath();
+        if (loadPath == null) return;
         if (hubRegistry == null || connectionRenderer == null) return;
 
         SavedLayout data;
-        try { data = JsonUtility.FromJson<SavedLayout>(File.ReadAllText(SavePath)); }
+        try { data = JsonUtility.FromJson<SavedLayout>(File.ReadAllText(loadPath)); }
         catch (System.Exception e) { Debug.LogWarning("[RoadNetworkEditor] Failed to read layout: " + e.Message); return; }
         if (data == null) return;
 
