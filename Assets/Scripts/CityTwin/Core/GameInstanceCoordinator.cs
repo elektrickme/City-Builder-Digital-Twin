@@ -215,8 +215,9 @@ namespace CityTwin.Core
         }
 
         /// <summary>
-        /// Local per-instance restart. Clears all placed tiles, resets budget, picks a new
-        /// random hub layout preset, rebuilds the transit graph, and restarts the session timer.
+        /// Local per-instance restart. Clears all placed tiles, resets budget, re-picks the hub
+        /// layout preset (the one pinned by a saved road layout, else random), rebuilds the
+        /// transit graph, and restarts the session timer.
         /// Does NOT reload the scene — other game instances are unaffected.
         /// </summary>
         public void RestartGame()
@@ -232,7 +233,7 @@ namespace CityTwin.Core
             if (configLoader?.Config != null)
                 Budget = configLoader.Config.Budget?.startingBudget ?? 1000;
 
-            hubLayoutManager?.PickRandomPreset();
+            hubLayoutManager?.PickPresetForRound();
 
             ApplyRegistryHubsToSimulation();
             GenerateTransitStops();

@@ -44,6 +44,8 @@ public class RoadNetworkEditor : MonoBehaviour
     [System.Serializable]
     private class SavedLayout
     {
+        [Tooltip("Name of the hub layout preset this layout was built on. Pins the preset at startup/restart so the custom map always loads on the right hubs.")]
+        public string preset = "";
         public List<SavedV2> hubs = new List<SavedV2>();
         public List<SavedExtension> extensions = new List<SavedExtension>();
         public List<SavedWaypoint> waypoints = new List<SavedWaypoint>();
@@ -51,8 +53,10 @@ public class RoadNetworkEditor : MonoBehaviour
 
     /// <summary>All game instances share one layout file: the quadrants are copies of the same
     /// map, and the old per-instance naming (road_layout_&lt;GameObject name&gt;.json) meant a layout
-    /// edited on instance 1 never reached the other three copies.</summary>
-    private static string SharedPath => Path.Combine(Application.streamingAssetsPath, "road_layout.json");
+    /// edited on instance 1 never reached the other three copies. Public so HubLayoutManager can
+    /// peek the pinned preset name from the same file.</summary>
+    public static string SharedLayoutPath => Path.Combine(Application.streamingAssetsPath, "road_layout.json");
+    private static string SharedPath => SharedLayoutPath;
 
     /// <summary>Legacy per-instance file name, kept for migration of existing layouts.</summary>
     private string LegacyInstancePath
@@ -101,7 +105,31 @@ public class RoadNetworkEditor : MonoBehaviour
         }
     }
 
+    private HubLayoutManager _layoutManager;
+
     private IEnumerator Start()
+    {
+        yield return ApplyWhenHubsReady();
+
+        // Round restarts re-pick the layout preset; re-apply the saved roads every time so
+        // the custom map survives the whole day, not just the first round.
+        _layoutManager = GetComponentInChildren<HubLayoutManager>(true);
+        if (_layoutManager == null && coordinator != null)
+            _layoutManager = coordinator.GetComponentInChildren<HubLayoutManager>(true);
+        if (_layoutManager != null) _layoutManager.OnPresetActivated += HandlePresetActivated;
+    }
+
+    private void OnDestroy()
+    {
+        if (_layoutManager != null) _layoutManager.OnPresetActivated -= HandlePresetActivated;
+    }
+
+    private void HandlePresetActivated()
+    {
+        if (isActiveAndEnabled) StartCoroutine(ApplyWhenHubsReady());
+    }
+
+    private IEnumerator ApplyWhenHubsReady()
     {
         // Wait until hubs actually exist (config loads async) before applying the saved layout,
         // otherwise a hub-count mismatch drops the saved city positions.
@@ -135,6 +163,13 @@ public class RoadNetworkEditor : MonoBehaviour
         hubRegistry.FetchHubs();
 
         var data = new SavedLayout();
+
+        // Record the active preset: it pins the map at startup/restart so this layout is
+        // always applied to the hubs it was built on (instead of a random preset).
+        var lm = _layoutManager != null ? _layoutManager : GetComponentInChildren<HubLayoutManager>(true);
+        if (lm == null && coordinator != null) lm = coordinator.GetComponentInChildren<HubLayoutManager>(true);
+        data.preset = lm != null && lm.ActivePreset != null ? lm.ActivePreset.gameObject.name : "";
+
         foreach (var hub in hubRegistry.Hubs)
         {
             var rt = hub.transform as RectTransform;
@@ -164,8 +199,9 @@ public class RoadNetworkEditor : MonoBehaviour
                 if (File.Exists(LegacyInstancePath + ".meta")) File.Delete(LegacyInstancePath + ".meta");
             }
             _statusOk = true;
-            _status = $"Saved (shared, all instances): {data.hubs.Count} hubs, {data.extensions.Count} ends, {data.waypoints.Count} bends";
-            Debug.Log("[RoadNetworkEditor] Saved shared road layout: " + SharedPath);
+            _status = $"Saved (shared, all instances): {data.hubs.Count} hubs, {data.extensions.Count} ends, {data.waypoints.Count} bends"
+                    + (string.IsNullOrEmpty(data.preset) ? "" : $" - map pinned to '{data.preset}'");
+            Debug.Log("[RoadNetworkEditor] Saved shared road layout (preset '" + data.preset + "'): " + SharedPath);
         }
         catch (System.Exception e)
         {
