@@ -241,20 +241,49 @@ namespace CityTwin.Config
             while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
         }
 
-        /// <summary>Read a JSON string value (including after the opening quote); advances i past the closing quote.</summary>
+        /// <summary>Read a JSON string value (including after the opening quote); advances i past
+        /// the closing quote. DECODES escape sequences so values round-trip symmetrically with
+        /// EscapeJson — the old raw read left "\n"/"\"" literal in memory and every save re-escaped
+        /// them, doubling the backslashes in the file each session.</summary>
         private static string ReadString(string s, ref int i)
         {
             if (i >= s.Length || s[i] != '"') return "";
             i++;
-            int start = i;
+            var sb = new System.Text.StringBuilder();
             while (i < s.Length && s[i] != '"')
             {
-                if (s[i] == '\\') i++;
+                char c = s[i];
+                if (c == '\\' && i + 1 < s.Length)
+                {
+                    i++;
+                    char e = s[i];
+                    switch (e)
+                    {
+                        case 'n': sb.Append('\n'); break;
+                        case 'r': sb.Append('\r'); break;
+                        case 't': sb.Append('\t'); break;
+                        case 'b': sb.Append('\b'); break;
+                        case 'f': sb.Append('\f'); break;
+                        case 'u':
+                            if (i + 4 < s.Length && ushort.TryParse(s.Substring(i + 1, 4),
+                                    System.Globalization.NumberStyles.HexNumber,
+                                    System.Globalization.CultureInfo.InvariantCulture, out ushort code))
+                            {
+                                sb.Append((char)code);
+                                i += 4;
+                            }
+                            break;
+                        default: sb.Append(e); break; // \" \\ \/ etc. -> the character itself
+                    }
+                }
+                else
+                {
+                    sb.Append(c);
+                }
                 i++;
             }
-            string result = s.Substring(start, i - start);
             if (i < s.Length) i++;
-            return result;
+            return sb.ToString();
         }
 
         /// <summary>Map JSON DTOs to BuildingDefinition (with null-safe baseValues).</summary>

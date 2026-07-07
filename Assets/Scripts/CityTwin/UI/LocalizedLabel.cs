@@ -30,6 +30,10 @@ namespace CityTwin.UI
                 if (root != null)
                     localization = root.LocalizationService;
             }
+            // The tooltip has always promised this fallback; without it a label with no explicit
+            // target silently does nothing (several end-screen labels were dormant because of it).
+            if (targetTmp == null)
+                targetTmp = GetComponent<TextMeshProUGUI>();
         }
 
         private void OnEnable()

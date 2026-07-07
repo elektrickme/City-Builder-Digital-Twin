@@ -141,6 +141,72 @@ namespace CityTwin.Simulation
             }
         }
 
+        /// <summary>
+        /// Sprinkle stops along an arbitrary polyline (e.g. a road extension drawn beyond a hub)
+        /// using the same spacing/jitter/rejection rules as GenerateStops. Stops enter the graph
+        /// at entryNodeId — the hub the extension hangs off — so pathfinding rides the extension
+        /// into the network. Appends to the stop list; call after GenerateStops.
+        /// </summary>
+        public void GenerateStopsAlongPath(IReadOnlyList<Vector2> path, int entryNodeId,
+                                           float spacing = 60f, float minDistFromNode = 30f, float minDistBetweenStops = 30f,
+                                           float spacingJitter = 0f, float removalRate = 0f, int seed = -1)
+        {
+            if (path == null || path.Count < 2) return;
+            if (entryNodeId < 0 || entryNodeId >= _nodes.Count) return;
+
+            spacingJitter = Mathf.Clamp01(spacingJitter);
+            removalRate = Mathf.Clamp01(removalRate);
+            var rng = seed >= 0 ? new System.Random(seed) : new System.Random();
+
+            float totalLen = 0f;
+            for (int i = 1; i < path.Count; i++)
+                totalLen += Vector2.Distance(path[i - 1], path[i]);
+            if (totalLen < spacing) return;
+
+            int count = Mathf.FloorToInt(totalLen / spacing);
+            for (int j = 1; j <= count; j++)
+            {
+                float baseT = (float)j / (count + 1);
+                float slotHalf = 0.5f / (count + 1);
+                float jitterT = spacingJitter > 0f
+                    ? ((float)rng.NextDouble() * 2f - 1f) * slotHalf * spacingJitter
+                    : 0f;
+                float t = Mathf.Clamp01(baseT + jitterT);
+                Vector2 pos = PointAlongPath(path, totalLen * t);
+
+                if (removalRate > 0f && rng.NextDouble() < removalRate) continue;
+                if (IsTooCloseToNodeOrStop(pos, minDistFromNode, minDistBetweenStops)) continue;
+
+                _stops.Add(new TransitStop
+                {
+                    Position = pos,
+                    EdgeFromId = entryNodeId,
+                    EdgeToId = entryNodeId
+                });
+            }
+        }
+
+        private bool IsTooCloseToNodeOrStop(Vector2 pos, float minDistFromNode, float minDistBetweenStops)
+        {
+            foreach (var node in _nodes)
+                if (Vector2.Distance(pos, node.Position) < minDistFromNode) return true;
+            foreach (var stop in _stops)
+                if (Vector2.Distance(pos, stop.Position) < minDistBetweenStops) return true;
+            return false;
+        }
+
+        private static Vector2 PointAlongPath(IReadOnlyList<Vector2> path, float dist)
+        {
+            for (int i = 1; i < path.Count; i++)
+            {
+                float seg = Vector2.Distance(path[i - 1], path[i]);
+                if (dist <= seg || i == path.Count - 1)
+                    return Vector2.Lerp(path[i - 1], path[i], seg > 0.0001f ? Mathf.Clamp01(dist / seg) : 0f);
+                dist -= seg;
+            }
+            return path[path.Count - 1];
+        }
+
         /// <summary>Shortest path from startId to all nodes. Returns distances (key = node id, value = distance). Use float.MaxValue for unreachable.</summary>
         public Dictionary<int, float> Dijkstra(int startId)
         {

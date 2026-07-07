@@ -31,6 +31,12 @@ public class MouseBuildingTester : MonoBehaviour
     [SerializeField] private GameObject markerPrefab;
     [Tooltip("UI camera used for ScreenPointToLocalPointInRectangle. Leave null to use Camera.main.")]
     [SerializeField] private Camera uiCamera;
+    [Tooltip("Optional fan-shaped table bounds. When set, releasing a dragged building outside the bounds discards it (removes it from the table).")]
+    [SerializeField] private TableBounds tableBounds;
+    [Tooltip("Optional rectangular drop-to-clear zone. Releasing a dragged building inside it removes the building — more reliable than aiming outside the fan bounds. Auto-resolved.")]
+    [SerializeField] private ClearDropZone clearZone;
+    [Tooltip("Optional road layout editor toggled from this menu. Tile input pauses while it is active.")]
+    [SerializeField] private RoadNetworkEditor roadEditor;
 
     [Header("Building ids for number keys")]
     [SerializeField] private string key1BuildingId = "garden";
@@ -42,6 +48,8 @@ public class MouseBuildingTester : MonoBehaviour
     [SerializeField] private bool enableBackquotePicker = true;
     [SerializeField] private Key togglePickerKey = Key.Backquote;
     [SerializeField] private bool pauseInputWhilePickerOpen = true;
+    [Tooltip("Auto-save all playtest settings to game_config.json when the menu is closed, so they persist across play sessions instead of resetting to config defaults.")]
+    [SerializeField] private bool persistSettingsOnClose = true;
     [Tooltip("Master IMGUI scale for the whole debug menu (also adjustable from the bar when the menu is open).")]
     [SerializeField, Range(0.5f, 5f)] private float pickerUiScale = 1f;
 
@@ -61,11 +69,35 @@ public class MouseBuildingTester : MonoBehaviour
     private readonly List<ActiveTile> _tiles = new List<ActiveTile>();
     private ActiveTile _dragging;
     private Vector2 _dragOffset;
+    private Vector2 _pressScreenPos;
     private string _currentBuildingId;
     private int _nextDebugTileId;
 
     private bool _pickerOpen;
     private Vector2 _pickerScroll;
+    // Collapsible-section state + compact mode (descriptions hidden unless requested).
+    private readonly System.Collections.Generic.Dictionary<string, bool> _sectionOpen =
+        new System.Collections.Generic.Dictionary<string, bool>();
+    private static bool _showDetails;
+    // Basic mode shows only the client-facing balance knobs; expert mode shows everything.
+    private bool _expertMode;
+
+    /// <summary>Collapsible section header. Returns true while the section is open.</summary>
+    private bool DrawFoldout(string title, string subtitle, bool defaultOpen = false)
+    {
+        if (!_sectionOpen.TryGetValue(title, out bool open)) open = defaultOpen;
+        var style = new GUIStyle(GUI.skin.button) { alignment = TextAnchor.MiddleLeft, fontStyle = FontStyle.Bold, fontSize = 12 };
+        style.normal.textColor = new Color(0.3f, 0.85f, 1f);
+        bool next = GUILayout.Toggle(open, (open ? "▼  " : "▶  ") + title, style, GUILayout.Height(24f));
+        if (next != open) _sectionOpen[title] = next;
+        if (next && _showDetails && !string.IsNullOrEmpty(subtitle))
+        {
+            var st = new GUIStyle(GUI.skin.label) { wordWrap = true, fontSize = 10 };
+            st.normal.textColor = new Color(0.7f, 0.7f, 0.7f);
+            GUILayout.Label(subtitle, st);
+        }
+        return next;
+    }
     private string _pickerFilter = "";
     private Texture2D _pickerRingTexture;
     private bool _advancedOpen;
@@ -83,9 +115,39 @@ public class MouseBuildingTester : MonoBehaviour
         if (buildingSpawner == null) buildingSpawner = GetComponentInChildren<BuildingSpawner>(true);
         if (inactivityPopup == null) inactivityPopup = GetComponentInChildren<InactivityPopupController>(true);
         if (inactivityPopup == null) inactivityPopup = GetComponentInParent<InactivityPopupController>(true);
+        // Markers live under the spawner's ContentRoot and all TUIO mapping uses its rect,
+        // so click mapping MUST use that same rect — override any stale serialized value.
+        if (buildingSpawner != null && buildingSpawner.ContentRoot != null) tableArea = buildingSpawner.ContentRoot;
         if (tableArea == null) tableArea = GetComponentInChildren<RectTransform>(true);
-        if (tableArea == null && buildingSpawner != null) tableArea = buildingSpawner.ContentRoot;
         if (uiCamera == null) uiCamera = Camera.main;
+        if (tableBounds == null) tableBounds = GetComponentInParent<TableBounds>(true);
+        if (clearZone == null)
+        {
+            var giRoot = GetComponentInParent<GameInstanceRoot>(true);
+            if (giRoot != null) clearZone = giRoot.GetComponentInChildren<ClearDropZone>(true);
+        }
+        if (roadEditor == null)
+        {
+            roadEditor = GetComponentInParent<RoadNetworkEditor>(true);
+            if (roadEditor == null && coordinator != null)
+                roadEditor = coordinator.GetComponentInChildren<RoadNetworkEditor>(true);
+        }
+    }
+
+    /// <summary>
+    /// Track a tile placed by another system (e.g. BuildingPalette drag-drop) so it gets
+    /// the same mouse drag / ESC-delete / off-table discard handling as tiles placed here.
+    /// </summary>
+    public void RegisterExternalTile(string debugTileId, string engineId, RectTransform marker, string buildingId)
+    {
+        if (string.IsNullOrEmpty(engineId) && string.IsNullOrEmpty(debugTileId)) return;
+        _tiles.Add(new ActiveTile
+        {
+            DebugTileId = debugTileId,
+            EngineId = engineId,
+            Marker = marker,
+            BuildingId = buildingId
+        });
     }
 
     private void Update()
@@ -105,9 +167,23 @@ public class MouseBuildingTester : MonoBehaviour
         if (keyboard == null || mouse == null) return;
 
         if (enableBackquotePicker && WasPressedThisFrame(keyboard, togglePickerKey))
+        {
             _pickerOpen = !_pickerOpen;
+            // Persist tweaks when the menu closes so settings survive play-mode restarts.
+            if (!_pickerOpen && persistSettingsOnClose && coordinator != null)
+            {
+                _lastSaveOk = coordinator.SaveConfigDebug();
+                _lastSaveMessage = _lastSaveOk
+                    ? $"Settings auto-saved on close  ({System.DateTime.Now:HH:mm:ss})"
+                    : "Auto-save failed (on web use Export) - see console.";
+            }
+        }
 
         if (_pickerOpen && pauseInputWhilePickerOpen)
+            return;
+
+        // Road editor owns the mouse while it's active — no tile spawning/dragging.
+        if (roadEditor != null && roadEditor.EditModeActive)
             return;
 
         // Hotkeys 1-4 select building id
@@ -124,9 +200,59 @@ public class MouseBuildingTester : MonoBehaviour
         if (mouse.leftButton.isPressed)
             OnMouseDrag(screenPos);
 
+        // Clear-zone feedback: armed while any building is dragged, hot while hovering the zone.
+        if (clearZone != null)
+        {
+            bool draggingNow = mouse.leftButton.isPressed && _dragging != null;
+            clearZone.SetState(draggingNow, draggingNow && clearZone.ContainsScreenPoint(screenPos, uiCamera));
+        }
+
+        // Out-of-board indicator: the dragged pin's halo turns red while it sits outside the
+        // fan bounds or over the clear zone — i.e. wherever releasing would discard it.
+        if (mouse.leftButton.isPressed && _dragging != null && _dragging.Marker != null)
+        {
+            bool wouldDiscard =
+                (clearZone != null && clearZone.ContainsScreenPoint(screenPos, uiCamera)) ||
+                (tableBounds != null && !tableBounds.ContainsWorld(_dragging.Marker.position));
+            var display = _dragging.Marker.GetComponent<BuildingMarkerDisplay>();
+            if (display != null) display.SetPlacementInvalid(wouldDiscard, DiscardIndicatorColor);
+        }
+
         if (mouse.leftButton.wasReleasedThisFrame)
+        {
+            // Dropped on the clear zone → remove the building (checked first: it is the reliable,
+            // explicit affordance; the fan-bounds test below stays as the fallback).
+            if (_dragging != null && clearZone != null &&
+                clearZone.ContainsScreenPoint(screenPos, uiCamera))
+            {
+                RemoveActiveTile(_dragging);
+            }
+            // Dropped outside the fan-shaped table bounds → discard the building.
+            else if (_dragging != null && tableBounds != null && _dragging.Marker != null &&
+                !tableBounds.ContainsWorld(_dragging.Marker.position))
+            {
+                RemoveActiveTile(_dragging);
+            }
+            // Demo affordance: a simple TAP (no drag) on a red over-budget block removes it —
+            // simulating the player lifting the physical tile off the table.
+            else if (_dragging != null && !string.IsNullOrEmpty(_dragging.EngineId) &&
+                     _dragging.EngineId.StartsWith("ob:") &&
+                     (screenPos - _pressScreenPos).sqrMagnitude < 8f * 8f)
+            {
+                RemoveActiveTile(_dragging);
+            }
+            // Kept on the board: clear the red discard indicator.
+            if (_dragging != null && _dragging.Marker != null)
+            {
+                var display = _dragging.Marker.GetComponent<BuildingMarkerDisplay>();
+                if (display != null) display.SetPlacementInvalid(false, DiscardIndicatorColor);
+            }
             _dragging = null;
+        }
     }
+
+    /// <summary>Halo tint while a dragged pin hovers a discard area (outside the fan / clear zone).</summary>
+    private static readonly Color DiscardIndicatorColor = new Color(1f, 0.12f, 0.3f, 0.95f);
 
     private void OnMouseDown(Vector2 screenPos)
     {
@@ -142,22 +268,12 @@ public class MouseBuildingTester : MonoBehaviour
         {
                 var tile = _tiles[i];
             if (tile.Marker == null) continue;
-            if (RectTransformUtility.RectangleContainsScreenPoint(tile.Marker, screenPos, uiCamera))
+            if (IsPointOnMarker(tile, screenPos))
             {
                     if (deleteMode)
                 {
                         // Remove from simulation and destroy marker when ESC is held.
-                        if (coordinator != null && !string.IsNullOrEmpty(tile.DebugTileId))
-                        {
-                            coordinator.TryProcessTileRemoval(tile.DebugTileId);
-                        }
-                        else if (!string.IsNullOrEmpty(tile.EngineId))
-                        {
-                            simulationEngine.RemoveTile(tile.EngineId);
-                            buildingSpawner?.RemoveBuilding(tile.EngineId);
-                        }
-                        if (tile.Marker != null) Object.Destroy(tile.Marker.gameObject);
-                        _tiles.RemoveAt(i);
+                        RemoveActiveTile(tile);
                         _dragging = null;
                         return;
                     }
@@ -165,8 +281,8 @@ public class MouseBuildingTester : MonoBehaviour
                     {
                         // Start dragging this marker.
                         _dragging = tile;
-                        if (RectTransformUtility.ScreenPointToLocalPointInRectangle(
-                                tableArea, screenPos, uiCamera, out var local))
+                        _pressScreenPos = screenPos;
+                        if (TryScreenToContentLocal(screenPos, out var local))
                         {
                             _dragOffset = tile.Marker.anchoredPosition - local;
                         }
@@ -178,8 +294,7 @@ public class MouseBuildingTester : MonoBehaviour
         // Otherwise, spawn a new tile if we have a building selected
         if (string.IsNullOrEmpty(_currentBuildingId)) return;
 
-        if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(
-                tableArea, screenPos, uiCamera, out var spawnLocal))
+        if (!TryScreenToContentLocal(screenPos, out var spawnLocal))
             return;
 
         string engineId = null;
@@ -242,13 +357,71 @@ public class MouseBuildingTester : MonoBehaviour
         _dragOffset = Vector2.zero;
     }
 
+    /// <summary>
+    /// Convert a screen point into the marker coordinate space (spawner ContentRoot,
+    /// center-origin — pivot-safe via WorldToContentLocal). Falls back to tableArea local.
+    /// </summary>
+    private bool TryScreenToContentLocal(Vector2 screenPos, out Vector2 local)
+    {
+        if (buildingSpawner != null && buildingSpawner.ContentRoot != null)
+        {
+            if (RectTransformUtility.ScreenPointToWorldPointInRectangle(
+                    buildingSpawner.ContentRoot, screenPos, uiCamera, out Vector3 world))
+            {
+                local = buildingSpawner.WorldToContentLocal(world);
+                return true;
+            }
+            local = default;
+            return false;
+        }
+        return RectTransformUtility.ScreenPointToLocalPointInRectangle(tableArea, screenPos, uiCamera, out local);
+    }
+
+    /// <summary>
+    /// Click hit test for a placed marker. The rect test alone fails when the marker
+    /// prefab's root rect is tiny (visuals live in children), so also accept clicks
+    /// within the marker's visual radius (fallback 50 px) around its center.
+    /// </summary>
+    private bool IsPointOnMarker(ActiveTile tile, Vector2 screenPos)
+    {
+        if (RectTransformUtility.RectangleContainsScreenPoint(tile.Marker, screenPos, uiCamera))
+            return true;
+
+        if (!TryScreenToContentLocal(screenPos, out Vector2 local))
+            return false;
+
+        float grabRadius = 50f;
+        if (buildingSpawner != null && !string.IsNullOrEmpty(tile.EngineId) &&
+            buildingSpawner.TryGetMarkerVisualRadius(tile.EngineId, out float visualRadius) && visualRadius > 1f)
+        {
+            grabRadius = visualRadius;
+        }
+        return (tile.Marker.anchoredPosition - local).sqrMagnitude <= grabRadius * grabRadius;
+    }
+
+    /// <summary>Remove a tracked tile from simulation/spawner and destroy its marker.</summary>
+    private void RemoveActiveTile(ActiveTile tile)
+    {
+        if (tile == null) return;
+        if (coordinator != null && !string.IsNullOrEmpty(tile.DebugTileId))
+        {
+            coordinator.TryProcessTileRemoval(tile.DebugTileId);
+        }
+        else if (!string.IsNullOrEmpty(tile.EngineId))
+        {
+            simulationEngine.RemoveTile(tile.EngineId);
+            buildingSpawner?.RemoveBuilding(tile.EngineId);
+        }
+        if (tile.Marker != null) Object.Destroy(tile.Marker.gameObject);
+        _tiles.Remove(tile);
+    }
+
     private void OnMouseDrag(Vector2 screenPos)
     {
         if (_dragging == null || simulationEngine == null || tableArea == null)
             return;
 
-        if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(
-                tableArea, screenPos, uiCamera, out var local))
+        if (!TryScreenToContentLocal(screenPos, out var local))
             return;
 
         Vector2 targetLocal = local + _dragOffset;
@@ -294,43 +467,14 @@ public class MouseBuildingTester : MonoBehaviour
         float reservedTopScreen = pad + MasterScaleBarScreenH;
         float topLogical = reservedTopScreen * inv;
         float logicalScreenH = Screen.height * inv;
-        float leftWidth = Mathf.Min(680f, (Screen.width * inv) * 0.58f);
-        float rightWidth = Mathf.Min(360f, (Screen.width * inv) * 0.4f);
+        float rightWidth = Mathf.Min(440f, (Screen.width * inv) * 0.45f);
         float height = Mathf.Max(200f, logicalScreenH - topLogical - pad);
 
-        // ── Left panel: Building Picker ──
-        var leftRect = new Rect(pad, topLogical, leftWidth, height);
-        GUI.Box(leftRect, "Debug Building Picker");
-
-        float leftInnerH = leftRect.height - 28f - pad;
-        GUILayout.BeginArea(new Rect(leftRect.x + pad, leftRect.y + 28f, leftRect.width - pad * 2f, leftInnerH));
-        GUILayout.BeginVertical(GUILayout.Height(leftInnerH));
-
-        GUILayout.BeginHorizontal();
-        GUILayout.Label("Filter", GUILayout.Width(40f));
-        _pickerFilter = GUILayout.TextField(_pickerFilter ?? "", GUILayout.MinWidth(120f));
-        GUILayout.FlexibleSpace();
-        if (GUILayout.Button("Reset halos", GUILayout.Width(88f)) && buildingSpawner != null)
-        {
-            buildingSpawner.ClearDebugHaloScales();
-            simulationEngine?.RefreshAllTileConnections();
-        }
-        if (GUILayout.Button("Close", GUILayout.Width(70f)))
-            _pickerOpen = false;
-        GUILayout.EndHorizontal();
-
+        // Left side of the screen stays clean: the building catalog now lives inside the
+        // Playtesting Controls panel (expert mode). Palette drag-drop covers placement.
         var buildings = configLoader != null ? configLoader.Config?.Buildings : null;
-        if (buildings == null || buildings.Length == 0)
-        {
-            GUILayout.Label("No buildings found. Ensure `GameConfigLoader` is present and loaded.");
-            GUILayout.EndVertical();
-            GUILayout.EndArea();
-            GUI.matrix = oldMatrix;
-            return;
-        }
-
         BuildingDefinition selectedDef = null;
-        if (!string.IsNullOrEmpty(_currentBuildingId))
+        if (buildings != null && !string.IsNullOrEmpty(_currentBuildingId))
         {
             for (int si = 0; si < buildings.Length; si++)
             {
@@ -338,66 +482,6 @@ public class MouseBuildingTester : MonoBehaviour
                 if (cand != null && cand.Id == _currentBuildingId) { selectedDef = cand; break; }
             }
         }
-
-        DrawPickerSelectionPreview(selectedDef);
-
-        GUILayout.Space(4f);
-        GUILayout.Label("Click Pick or a row to select. Halo scale affects marker size, connection range, and footprint radius.", GUI.skin.box);
-
-        _pickerScroll = GUILayout.BeginScrollView(_pickerScroll, GUI.skin.box, GUILayout.ExpandHeight(true));
-        for (int i = 0; i < buildings.Length; i++)
-        {
-            var b = buildings[i];
-            if (b == null || string.IsNullOrEmpty(b.Id)) continue;
-
-            string name = GetBuildingDisplayName(b);
-            if (!PassesFilter(b, name, _pickerFilter)) continue;
-
-            bool selected = _currentBuildingId == b.Id;
-            var oldColor = GUI.color;
-            if (selected) GUI.color = new Color(0.65f, 0.9f, 1f, 1f);
-
-            GUILayout.BeginVertical(GUI.skin.box);
-
-            GUILayout.BeginHorizontal(GUILayout.Height(50f));
-            var thumbRect = GUILayoutUtility.GetRect(44f, 44f, GUILayout.Width(44f), GUILayout.Height(44f));
-            DrawPickerListThumb(thumbRect, b.Id);
-
-            if (GUILayout.Button("Pick", GUILayout.Width(48f), GUILayout.Height(44f)))
-                _currentBuildingId = b.Id;
-
-            GUILayout.BeginVertical();
-            GUILayout.Label($"{name}  ({b.Id})", GUILayout.ExpandWidth(true));
-            GUILayout.BeginHorizontal();
-            GUILayout.Label($"Price: {b.Price}", GUILayout.Width(78f));
-            float haloPx = 0f;
-            if (buildingSpawner != null && buildingSpawner.TryGetEstimatedBuildingRadius(b.Id, out haloPx))
-                GUILayout.Label($"Halo ~{haloPx:F0}px", GUILayout.Width(92f));
-            if (simulationEngine != null && simulationEngine.TryGetImpactSearchRadius(b.Id, out float impactR))
-                GUILayout.Label($"Stops r={impactR:F0}", GUILayout.Width(88f));
-            GUILayout.EndHorizontal();
-            GUILayout.EndVertical();
-
-            GUILayout.EndHorizontal();
-
-            if (b.BaseValues != null)
-            {
-                GUILayout.Label(
-                    $"Impact: {b.ImpactSize} | Importance: {b.Importance:0.00} | " +
-                    $"Env {b.BaseValues.environment}  Eco {b.BaseValues.economy}  Safe {b.BaseValues.healthSafety}  Cul {b.BaseValues.cultureEdu}");
-            }
-            else
-            {
-                GUILayout.Label($"Impact: {b.ImpactSize} | Importance: {b.Importance:0.00}");
-            }
-
-            GUILayout.EndVertical();
-            GUI.color = oldColor;
-        }
-        GUILayout.EndScrollView();
-
-        GUILayout.EndVertical();
-        GUILayout.EndArea();
 
         // ── Right panel: Scoring Parameter Sliders ──
         if (simulationEngine != null)
@@ -429,12 +513,77 @@ public class MouseBuildingTester : MonoBehaviour
 
             bool changed = false;
 
-            DrawHelpBox();
+            GUILayout.BeginHorizontal();
+            _showDetails = GUILayout.Toggle(_showDetails, " Help & descriptions", GUILayout.Height(20f));
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("Close", GUILayout.Width(64f)))
+                _pickerOpen = false;
+            GUILayout.EndHorizontal();
+            if (_showDetails) DrawHelpBox();
 
             DrawSaveRow();
 
-            // Playtesting (always visible)
-            DrawSectionHeader("Playtesting", "Live balancing knobs. Use Save config to persist; otherwise they reset on restart / relaunch.");
+            _expertMode = GUILayout.Toggle(_expertMode,
+                _expertMode ? " Expert mode — showing everything" : " Expert mode — off (client basics only)",
+                GUI.skin.button, GUILayout.Height(24f));
+
+            // ── Basic: the handful of knobs a client needs to balance the game ──
+            if (!_expertMode)
+            {
+                if (DrawFoldout("Game balance (basic)", "The few knobs that matter. Use Save config to persist.", true))
+                {
+                    if (buildingSpawner != null)
+                        changed |= DrawSlider("Building radius (all)",
+                            "Master multiplier on every building's reach: marker size, connection range, footprint.",
+                            buildingSpawner.GetDebugHaloMasterScale(),
+                            BuildingSpawner.DebugHaloMultiplierMin, BuildingSpawner.DebugHaloMultiplierMax,
+                            v => { buildingSpawner.SetDebugHaloMasterScale(v); simulationEngine?.RefreshAllTileConnections(); });
+                    changed |= DrawSlider("QOL inequality penalty",
+                        "City QOL -= penalty x (best hub - worst hub). Higher punishes uneven cities.",
+                        simulationEngine.QolBalancePenalty, 0f, 2f, v => simulationEngine.QolBalancePenalty = v);
+                    changed |= DrawSlider("QOL maximum cap",
+                        "Hard ceiling on the final score.",
+                        simulationEngine.QolCap, 1f, 100f, v => simulationEngine.QolCap = v);
+                    if (coordinator != null)
+                    {
+                        DrawIntSlider("Starting budget",
+                            "Money each round starts with.",
+                            coordinator.DebugStartingBudget, 0, 20000, v => coordinator.SetStartingBudgetDebug(v));
+                        DrawIntSlider("Session length (s)",
+                            "Total round time in seconds.",
+                            coordinator.DebugSessionLength, 30, 900, v => coordinator.SetSessionLengthDebug(v));
+                        if (configLoader != null && configLoader.Config != null && configLoader.Config.Stops != null)
+                            DrawSlider("Bus stop spacing",
+                                "Distance between stops along roads. Lower = denser network.",
+                                configLoader.Config.Stops.spacing, 20f, 600f, v => coordinator.SetBusStopDensityDebug(v));
+                        if (buildingSpawner != null)
+                            DrawSlider("Tile scale",
+                                "Cosmetic size of placed building tiles.",
+                                coordinator.DebugTileScale, BuildingSpawner.TileScaleMin, BuildingSpawner.TileScaleMax,
+                                v => coordinator.SetTileScaleDebug(v));
+                    }
+                }
+            }
+            else
+            {
+
+            // Building catalog (moved from the old left panel)
+            if (DrawFoldout("Building catalog", "Click a row to select for mouse placement. Keys 1-4 also pick.", false))
+                DrawBuildingCatalog(buildings, selectedDef);
+
+            // Playtesting
+            bool playtestingOpen = DrawFoldout("Playtesting", "Live balancing knobs. Use Save config to persist; otherwise they reset on restart / relaunch.", true);
+            if (playtestingOpen)
+            {
+
+#if UNITY_EDITOR
+            if (roadEditor != null &&
+                GUILayout.Button(roadEditor.EditModeActive ? "Close Road Editor" : "Road Editor (drag cities & road ends)", GUILayout.Height(28f)))
+            {
+                roadEditor.ToggleEditMode();
+                _pickerOpen = false; // hand the screen over to the road editor handles
+            }
+#endif
 
             if (coordinator != null)
             {
@@ -457,6 +606,19 @@ public class MouseBuildingTester : MonoBehaviour
                     DrawSlider("Bus stop spacing",
                         $"Distance between stops along roads. Lower = denser. Stop count ~ road length / spacing. Now: {stopCount} stops.",
                         configLoader.Config.Stops.spacing, 20f, 600f, v => coordinator.SetBusStopDensityDebug(v));
+                    DrawSlider("Bus stop removal",
+                        "Fraction of generated stops randomly dropped (real-world sparsity). 0 = keep all, 1 = remove all.",
+                        configLoader.Config.Stops.removalRate, 0f, 1f, v => coordinator.SetBusStopRemovalDebug(v));
+                    DrawSlider("Bus stop seed",
+                        "Reseeds the layout: which stops the removal drops and how jitter offsets them. Same seed = same pattern.",
+                        configLoader.Config.Stops.seed, 0, 9999, v => coordinator.SetBusStopSeedDebug(Mathf.RoundToInt(v)));
+                }
+
+                if (configLoader != null && configLoader.Config != null && configLoader.Config.Accessibility != null)
+                {
+                    DrawSlider("Connection removal",
+                        "Fraction of building connection lines (to stops/hubs) randomly hidden to thin a dense network. Visual only — scoring is unaffected. 0 = show all, 1 = hide all.",
+                        configLoader.Config.Accessibility.connectionRemovalRate, 0f, 1f, v => coordinator.SetConnectionRemovalDebug(v));
                 }
             }
             else
@@ -472,18 +634,22 @@ public class MouseBuildingTester : MonoBehaviour
             }
 
             DrawDisabledRow("Map select (A / B / C / D)", "Coming soon - build the map presets first.");
+            } // end Playtesting
 
             // Quality of Life
-            DrawSectionHeader("Quality of Life", "How the city QOL score is graded and balanced.");
+            if (DrawFoldout("Quality of Life", "How the city QOL score is graded and balanced."))
+            {
             changed |= DrawSlider("QOL Inequality Penalty",
                 "City QOL -= penalty x (best hub - worst hub). Higher punishes uneven cities; rewards spreading quality.",
                 simulationEngine.QolBalancePenalty, 0f, 2f, v => simulationEngine.QolBalancePenalty = v);
             changed |= DrawSlider("QOL Maximum Cap",
                 "Hard ceiling on final QOL. QOL can never exceed this, so pass bands above it are unreachable.",
                 simulationEngine.QolCap, 1f, 100f, v => simulationEngine.QolCap = v);
+            }
 
             // Building reach
-            DrawSectionHeader("Building reach (impact radius)", "How far each building size searches for bus stops to score through.");
+            if (DrawFoldout("Building reach (impact radius)", "How far each building size searches for bus stops to score through."))
+            {
             changed |= DrawSlider("Impact Radius - Small",
                 "Stop-search radius for small buildings.",
                 simulationEngine.ImpactRadiusSmall, 1f, 400f, v => simulationEngine.ImpactRadiusSmall = v);
@@ -493,29 +659,31 @@ public class MouseBuildingTester : MonoBehaviour
             changed |= DrawSlider("Impact Radius - Large",
                 "Stop-search radius for large buildings.",
                 simulationEngine.ImpactRadiusLarge, 1f, 400f, v => simulationEngine.ImpactRadiusLarge = v);
+            }
 
-            // Building halo - master x per-size; applies to all buildings, placed or future.
-            if (buildingSpawner != null)
+            // Tile + halo visuals in one section
+            if (coordinator != null && buildingSpawner != null &&
+                DrawFoldout("Tile & halo scale", "Tile scale is cosmetic; halo affects marker size, connection reach, and footprint for ALL buildings."))
             {
-                DrawSectionHeader("Building halo",
-                    "Master scales every halo; the per-size rows fine-tune each size. Affects marker size, connection reach, and footprint for ALL buildings, including already-placed ones.");
-                DrawSlider("Halo - Master (all)",
+                DrawSlider("Tile scale (all tiles)",
+                    "Visual scale multiplier for every placed building marker.",
+                    coordinator.DebugTileScale, BuildingSpawner.TileScaleMin, BuildingSpawner.TileScaleMax,
+                    v => coordinator.SetTileScaleDebug(v));
+                changed |= DrawSlider("Halo - Master (all)",
                     "Global halo multiplier applied on top of the per-size values.",
                     buildingSpawner.GetDebugHaloMasterScale(),
                     BuildingSpawner.DebugHaloMultiplierMin,
                     BuildingSpawner.DebugHaloMultiplierMax,
                     v => { buildingSpawner.SetDebugHaloMasterScale(v); simulationEngine?.RefreshAllTileConnections(); });
-                DrawHaloSizeSlider("Halo - Small", BuildingSpawner.HaloSizeSmall);
-                DrawHaloSizeSlider("Halo - Medium", BuildingSpawner.HaloSizeMedium);
-                DrawHaloSizeSlider("Halo - Large", BuildingSpawner.HaloSizeLarge);
+                changed |= DrawHaloSizeSlider("Halo - Small", BuildingSpawner.HaloSizeSmall);
+                changed |= DrawHaloSizeSlider("Halo - Medium", BuildingSpawner.HaloSizeMedium);
+                changed |= DrawHaloSizeSlider("Halo - Large", BuildingSpawner.HaloSizeLarge);
             }
 
             // Selected building (picked in the left panel): the 4 scores. Halo is tuned by size above.
-            if (selectedDef != null)
+            if (selectedDef != null &&
+                DrawFoldout($"Selected building ({selectedDef.Id})", "Per-building scores feed the completion score. Halo is tuned by size in the section above.", true))
             {
-                DrawSectionHeader($"Selected building ({selectedDef.Id})",
-                    "Per-building scores feed the completion score. Halo is tuned by size in the section above.");
-
                 if (buildingSpawner != null && buildingSpawner.TryGetEstimatedBuildingRadius(selectedDef.Id, out float haloPxRight))
                     GUILayout.Label($"Effective halo radius ~{haloPxRight:F0}px (size: {selectedDef.ImpactSize})", GUI.skin.label);
 
@@ -530,16 +698,12 @@ public class MouseBuildingTester : MonoBehaviour
             }
 
             // QOL pass thresholds
-            DrawQolBands();
+            if (DrawFoldout("QOL pass thresholds", "Final QOL when the timer ends picks an end-screen band. Drag a cutoff to move where each band starts."))
+                DrawQolBands();
 
             // Advanced (dev), collapsed by default
-            GUILayout.Space(10f);
-            _advancedOpen = GUILayout.Toggle(_advancedOpen,
-                _advancedOpen ? "[-] Advanced (dev) - scoring internals" : "[+] Advanced (dev) - scoring internals",
-                GUI.skin.button);
-            if (_advancedOpen)
+            if (DrawFoldout("Advanced (dev) - scoring internals", "Scoring-curve internals. Already dialed in - usually leave these alone."))
             {
-                DrawSectionHeader("Advanced (dev)", "Scoring-curve internals. Already dialed in - usually leave these alone.");
                 changed |= DrawSlider("Score Normalizer (Norm)",
                     "1 full contribution = NORM raw -> 100%. Higher = harder to fill pillars.",
                     simulationEngine.Norm, 1f, 500f, v => simulationEngine.Norm = v);
@@ -565,6 +729,8 @@ public class MouseBuildingTester : MonoBehaviour
                     "Max distance from building to road to count as connected.",
                     simulationEngine.RoadConnectRange, 1f, 1000f, v => simulationEngine.RoadConnectRange = v);
             }
+
+            } // end expert mode
 
             if (changed)
                 simulationEngine.RecalculateMetrics();
@@ -601,6 +767,68 @@ public class MouseBuildingTester : MonoBehaviour
         GUILayout.EndArea();
 
         GUI.matrix = prev;
+    }
+
+    /// <summary>Compact building catalog inside the controls panel: filter, selection preview,
+    /// and one clickable row per building (fixed-height inner scroll).</summary>
+    private void DrawBuildingCatalog(BuildingDefinition[] buildings, BuildingDefinition selectedDef)
+    {
+        if (buildings == null || buildings.Length == 0)
+        {
+            GUILayout.Label("No buildings found. Ensure `GameConfigLoader` is present and loaded.", GUI.skin.box);
+            return;
+        }
+
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("Filter", GUILayout.Width(40f));
+        _pickerFilter = GUILayout.TextField(_pickerFilter ?? "", GUILayout.MinWidth(90f));
+        if (GUILayout.Button("Reset halos", GUILayout.Width(88f)) && buildingSpawner != null)
+        {
+            buildingSpawner.ClearDebugHaloScales();
+            simulationEngine?.RefreshAllTileConnections();
+        }
+        GUILayout.EndHorizontal();
+
+        DrawPickerSelectionPreview(selectedDef);
+
+        _pickerScroll = GUILayout.BeginScrollView(_pickerScroll, GUI.skin.box, GUILayout.Height(240f));
+        var rowStyle = new GUIStyle(GUI.skin.button) { alignment = TextAnchor.MiddleLeft, fontSize = 12 };
+        var subStyle = new GUIStyle(GUI.skin.label) { fontSize = 10 };
+        subStyle.normal.textColor = new Color(0.75f, 0.78f, 0.85f);
+
+        for (int i = 0; i < buildings.Length; i++)
+        {
+            var b = buildings[i];
+            if (b == null || string.IsNullOrEmpty(b.Id)) continue;
+
+            string name = GetBuildingDisplayName(b);
+            if (!PassesFilter(b, name, _pickerFilter)) continue;
+
+            bool selected = _currentBuildingId == b.Id;
+            var oldColor = GUI.color;
+            if (selected) GUI.color = new Color(0.65f, 0.9f, 1f, 1f);
+
+            GUILayout.BeginHorizontal(GUILayout.Height(26f));
+            var thumbRect = GUILayoutUtility.GetRect(24f, 24f, GUILayout.Width(24f), GUILayout.Height(24f));
+            DrawPickerListThumb(thumbRect, b.Id);
+
+            float haloPx = 0f;
+            buildingSpawner?.TryGetEstimatedBuildingRadius(b.Id, out haloPx);
+            float impactR = 0f;
+            simulationEngine?.TryGetImpactSearchRadius(b.Id, out impactR);
+            string row = $"{(selected ? "● " : "")}{name}   ${b.Price}   halo {haloPx:F0}   stops {impactR:F0}";
+            if (GUILayout.Button(row, rowStyle, GUILayout.Height(24f), GUILayout.ExpandWidth(true)))
+                _currentBuildingId = b.Id;
+            GUILayout.EndHorizontal();
+
+            if ((selected || _showDetails) && b.BaseValues != null)
+                GUILayout.Label(
+                    $"     {b.ImpactSize} | imp {b.Importance:0.00} | Env {b.BaseValues.environment}  Eco {b.BaseValues.economy}  Safe {b.BaseValues.healthSafety}  Cul {b.BaseValues.cultureEdu}",
+                    subStyle);
+
+            GUI.color = oldColor;
+        }
+        GUILayout.EndScrollView();
     }
 
     private void DrawPickerSelectionPreview(BuildingDefinition selected)
@@ -813,10 +1041,10 @@ public class MouseBuildingTester : MonoBehaviour
         GUILayout.EndVertical();
     }
 
-    private void DrawHaloSizeSlider(string label, string sizeKey)
+    private bool DrawHaloSizeSlider(string label, string sizeKey)
     {
-        if (buildingSpawner == null) return;
-        DrawSlider(label,
+        if (buildingSpawner == null) return false;
+        return DrawSlider(label,
             "1x = prefab/catalog default. Higher = bigger halo and longer reach for this size.",
             buildingSpawner.GetDebugHaloScaleForSize(sizeKey),
             BuildingSpawner.DebugHaloMultiplierMin,
@@ -870,9 +1098,6 @@ public class MouseBuildingTester : MonoBehaviour
 
     private void DrawQolBands()
     {
-        DrawSectionHeader("QOL pass thresholds",
-            "Final QOL when the timer ends picks an end-screen band (the 'completion score'). Drag a cutoff to move where each band starts.");
-
         var bands = configLoader != null && configLoader.Config != null ? configLoader.Config.EndMessages : null;
         if (bands == null || bands.Length == 0)
         {
@@ -935,7 +1160,8 @@ public class MouseBuildingTester : MonoBehaviour
         GUILayout.Label(valueText, valueStyle, GUILayout.Width(70f));
         GUILayout.EndHorizontal();
 
-        if (!string.IsNullOrEmpty(description))
+        // Compact mode: per-slider explanations only when 'Show help & descriptions' is on.
+        if (_showDetails && !string.IsNullOrEmpty(description))
             GUILayout.Label(description, descStyle);
 
         // Filled bar behind slider

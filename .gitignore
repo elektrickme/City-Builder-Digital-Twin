@@ -73,3 +73,24 @@ crashlytics-build.properties
 # Temporary auto-generated Android Assets
 /[Aa]ssets/[Ss]treamingAssets/aa.meta
 /[Aa]ssets/[Ss]treamingAssets/aa/*
+
+# OS / IDE / local tooling
+.DS_Store
+.idea/
+.claude/
+.mcp.json
+.vsconfig
+mono_crash.*.json
+*.bak
+*.bak.meta
+
+# extOSC editor logs (package lives in Packages/manifest.json)
+/extOSC/
+
+# Unity crash-recovery scene snapshots
+/Assets/_Recovery/
+/Assets/_Recovery.meta
+
+# Dev screenshots taken from the editor
+/Assets/Screenshots/
+/Assets/Screenshots.meta

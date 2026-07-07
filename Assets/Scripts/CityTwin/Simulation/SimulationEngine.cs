@@ -673,7 +673,12 @@ namespace CityTwin.Simulation
                 if (hubQols[i] < minQol) minQol = hubQols[i];
             }
             meanQol /= n;
-            _qol = Mathf.Clamp(Mathf.Round(meanQol - _qolBalancePenalty * (maxQol - minQol)), 0f, _qolCap);
+            // Balance penalty can wipe the whole mean when a single hub carries the city (early game:
+            // one connected building -> huge spread). Floor at a quarter of the mean, minimum 1, so the
+            // score is never 0 while something useful is on the map.
+            float balanced = meanQol - _qolBalancePenalty * (maxQol - minQol);
+            float floor = meanQol > 0.01f ? Mathf.Max(1f, meanQol * 0.25f) : 0f;
+            _qol = Mathf.Clamp(Mathf.Round(Mathf.Max(floor, balanced)), 0f, _qolCap);
 
             OnMetricsChanged?.Invoke();
         }

@@ -9,6 +9,7 @@ Shader "UI/RoundedRadialFill"
         _StartAngle ("Start Angle (deg)", Float) = 90
         _StartCapScale ("Start Cap Scale", Range(0.5, 3.0)) = 1.0
         _EndCapScale ("End Cap Scale", Range(0.5, 3.0)) = 1.5
+        _GlowBoost ("HDR Glow Boost", Range(1, 6)) = 1
 
         // Unity UI required
         _StencilComp ("Stencil Comp", Float) = 8
@@ -63,6 +64,7 @@ Shader "UI/RoundedRadialFill"
             float _StartAngle;
             float _StartCapScale;
             float _EndCapScale;
+            float _GlowBoost;
 
             v2f vert(appdata v)
             {
@@ -117,6 +119,7 @@ Shader "UI/RoundedRadialFill"
                 // Sample gradient texture for color
                 fixed4 col = tex2D(_MainTex, i.uv) * i.color;
                 col.a *= smoothMask;
+                col.rgb *= _GlowBoost; // > 1 = HDR: the bloom post pass turns this into a halo
 
                 return col;
             }

@@ -12,6 +12,7 @@ namespace CityTwin.Core
         private float _remainingSeconds;
         private Phase _phase = Phase.Gameplay;
         private bool _running;
+        private bool _paused;
 
         public enum Phase { Gameplay, End }
         public Phase CurrentPhase => _phase;
@@ -38,7 +39,17 @@ namespace CityTwin.Core
         public void Stop()
         {
             _running = false;
+            _paused = false;
         }
+
+        /// <summary>Freeze the countdown without leaving the Gameplay phase (tutorial holds the clock;
+        /// placements and metrics keep working). Unpause when the tutorial hands over control.</summary>
+        public void SetPaused(bool paused)
+        {
+            _paused = paused;
+        }
+
+        public bool IsPaused => _paused;
 
         /// <summary>Configured session length in seconds (debug/playtest readout).</summary>
         public int GameplaySeconds => gameplaySeconds;
@@ -58,7 +69,7 @@ namespace CityTwin.Core
 
         private void Update()
         {
-            if (!_running) return;
+            if (!_running || _paused) return;
             _remainingSeconds -= Time.deltaTime;
             if (_remainingSeconds <= 0)
             {

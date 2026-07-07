@@ -15,53 +15,53 @@ MonoBehaviour:
   entries:
   - buildingId: garden
     sprite: {fileID: -7058519176109508740, guid: 32d9b9661cb934481b0817eeeae5acc3, type: 3}
-    haloColor: {r: 0.60784316, g: 1, b: 0.003921569, a: 1}
+    haloColor: {r: 0.60784316, g: 1, b: 0.003921569, a: 0.5}
     haloScaleMultiplier: 0.6
   - buildingId: park
-    sprite: {fileID: -7888238138366418302, guid: 9f18c11b0572c4623b200e943483ced1, type: 3}
-    haloColor: {r: 0.60784316, g: 1, b: 0.003921569, a: 1}
+    sprite: {fileID: 21300000, guid: 9f18c11b0572c4623b200e943483ced1, type: 3}
+    haloColor: {r: 0.60784316, g: 1, b: 0.003921569, a: 0.5}
     haloScaleMultiplier: 1
   - buildingId: recycling_plant
-    sprite: {fileID: -8680462451984358199, guid: 345d84b286040473a820a42b1fbe927d, type: 3}
-    haloColor: {r: 0.60784316, g: 1, b: 0.003921569, a: 1}
+    sprite: {fileID: 21300000, guid: 345d84b286040473a820a42b1fbe927d, type: 3}
+    haloColor: {r: 0.60784316, g: 1, b: 0.003921569, a: 0.5}
     haloScaleMultiplier: 1.4
   - buildingId: office
-    sprite: {fileID: 8194487913263652526, guid: 1922e55cae9ea4f87ae0c02088be64b3, type: 3}
-    haloColor: {r: 1, g: 0.5686275, b: 0, a: 1}
+    sprite: {fileID: 21300000, guid: 1922e55cae9ea4f87ae0c02088be64b3, type: 3}
+    haloColor: {r: 1, g: 0.5686275, b: 0, a: 0.7}
     haloScaleMultiplier: 0.6
   - buildingId: mall
     sprite: {fileID: -5296962484430874183, guid: 42ea482de896f4edd81a69ea060d9777, type: 3}
-    haloColor: {r: 1, g: 0.5686275, b: 0, a: 1}
+    haloColor: {r: 1, g: 0.5686275, b: 0, a: 0.7}
     haloScaleMultiplier: 1
   - buildingId: factory
-    sprite: {fileID: 9192123268450181283, guid: ea81502229a614e65a9b73b20fedb51d, type: 3}
-    haloColor: {r: 1, g: 0.5686275, b: 0, a: 1}
+    sprite: {fileID: 21300000, guid: ea81502229a614e65a9b73b20fedb51d, type: 3}
+    haloColor: {r: 1, g: 0.5686275, b: 0, a: 0.7}
     haloScaleMultiplier: 1.4
   - buildingId: police_station
-    sprite: {fileID: -2380052750540194564, guid: 55c8ab80f9a6c4a45bbc2bb8792d1542, type: 3}
-    haloColor: {r: 0.2, g: 0.5254902, b: 1, a: 1}
+    sprite: {fileID: 21300000, guid: 55c8ab80f9a6c4a45bbc2bb8792d1542, type: 3}
+    haloColor: {r: 0.25, g: 0.78, b: 1, a: 1}
     haloScaleMultiplier: 0.6
   - buildingId: fire_station
-    sprite: {fileID: 1183249877610971685, guid: 093e4bbc8bcdc4e04b79976523f0392c, type: 3}
-    haloColor: {r: 0, g: 0.56467056, b: 1, a: 1}
+    sprite: {fileID: 21300000, guid: 093e4bbc8bcdc4e04b79976523f0392c, type: 3}
+    haloColor: {r: 0.12, g: 0.8, b: 1, a: 1}
     haloScaleMultiplier: 1
   - buildingId: hospital
     sprite: {fileID: -2262800085479350396, guid: ac86b5872256d44339083856191ea42d, type: 3}
-    haloColor: {r: 0, g: 0.56467056, b: 1, a: 1}
+    haloColor: {r: 0.12, g: 0.8, b: 1, a: 1}
     haloScaleMultiplier: 1.4
   - buildingId: school
     sprite: {fileID: -2078830509285771716, guid: 65e240ca0dd914ab7bf3a9b206a387ee, type: 3}
-    haloColor: {r: 1, g: 0, b: 1, a: 1}
+    haloColor: {r: 1, g: 0, b: 1, a: 0.8}
     haloScaleMultiplier: 0.6
   - buildingId: library
-    sprite: {fileID: 5145786835061902003, guid: 211e23dff50c0498e856ad247e8a5930, type: 3}
-    haloColor: {r: 1, g: 0, b: 1, a: 1}
+    sprite: {fileID: 21300000, guid: 211e23dff50c0498e856ad247e8a5930, type: 3}
+    haloColor: {r: 1, g: 0, b: 1, a: 0.8}
     haloScaleMultiplier: 1
   - buildingId: museum
     sprite: {fileID: 54264382983760869, guid: ab5cacb87326240e48582303f5ba5e8f, type: 3}
-    haloColor: {r: 1, g: 0, b: 1, a: 1}
+    haloColor: {r: 1, g: 0, b: 1, a: 0.8}
     haloScaleMultiplier: 1
   - buildingId: circus
-    sprite: {fileID: 54264382983760869, guid: ab5cacb87326240e48582303f5ba5e8f, type: 3}
-    haloColor: {r: 1, g: 0, b: 1, a: 1}
+    sprite: {fileID: 21300000, guid: ab5cacb87326240e48582303f5ba5e8f, type: 3}
+    haloColor: {r: 1, g: 0, b: 1, a: 0.8}
     haloScaleMultiplier: 1.4
