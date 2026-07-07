@@ -81,6 +81,37 @@ namespace CityTwin.Core
             TweenFill(cultureFillImage, Mathf.Clamp01(culture / metricCap) * maxFill);
         }
 
+        /// <summary>Tutorial demo: sweep ring quadrants to full and back so visitors see what the
+        /// ring measures. quadrant -1 = all four (slightly staggered into a chase), otherwise
+        /// 0 = Environment, 1 = Economy, 2 = Safety, 3 = Culture.
+        /// Each quadrant runs under its own tween id, so consecutive calls for different
+        /// quadrants overlap into a wave instead of killing each other mid-sweep (the old
+        /// blanket kill stranded finished arcs at full). Any interruption — a restart of the
+        /// same quadrant, a live SetMetricState push, OnDisable — clears the arc back to its
+        /// base value via OnKill, so a demo can never leave a stat lit.</summary>
+        public void PlayRingDemo(int quadrant = -1, float seconds = 2.2f)
+        {
+            if (statRing == null) return;
+            float up = seconds * 0.4f, hold = seconds * 0.2f, down = seconds * 0.4f;
+
+            void Sweep(System.Func<float> get, System.Action<float> set, int q, float delay)
+            {
+                string id = statRing.GetInstanceID() + "_ringDemo" + q;
+                DOTween.Kill(id); // restart THIS arc only; the others keep their own sweeps
+                float baseVal = get();
+                DOTween.Sequence().SetTarget(statRing).SetId(id).SetUpdate(true).SetDelay(delay)
+                    .Append(DOTween.To(() => get(), v => set(v), 0.95f, up).SetEase(Ease.OutCubic))
+                    .AppendInterval(hold)
+                    .Append(DOTween.To(() => get(), v => set(v), baseVal, down).SetEase(Ease.InOutSine))
+                    .OnKill(() => set(baseVal));
+            }
+
+            if (quadrant == -1 || quadrant == 0) Sweep(() => statRing.environmentFill, v => statRing.environmentFill = v, 0, 0f);
+            if (quadrant == -1 || quadrant == 1) Sweep(() => statRing.economyFill, v => statRing.economyFill = v, 1, quadrant == -1 ? 0.12f : 0f);
+            if (quadrant == -1 || quadrant == 2) Sweep(() => statRing.safetyFill, v => statRing.safetyFill = v, 2, quadrant == -1 ? 0.24f : 0f);
+            if (quadrant == -1 || quadrant == 3) Sweep(() => statRing.cultureFill, v => statRing.cultureFill = v, 3, quadrant == -1 ? 0.36f : 0f);
+        }
+
         /// <summary>Ring counterpart of <see cref="TweenFill"/>: same easing, drives a component field.</summary>
         private void TweenRing(System.Func<float> getter, System.Action<float> setter, float target)
         {

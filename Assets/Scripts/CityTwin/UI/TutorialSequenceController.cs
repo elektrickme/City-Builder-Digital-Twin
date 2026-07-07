@@ -53,8 +53,6 @@ namespace CityTwin.UI
         [Header("Round-intro reveal (hubs pop → roads draw → particles flow)")]
         [Tooltip("Delay after the start screen closes before the first hub pops.")]
         [SerializeField] private float revealStartDelay = 0.5f;
-        [Tooltip("Gap between consecutive hub pops.")]
-        [SerializeField] private float revealHubStagger = 0.12f;
         [Tooltip("Seconds for the road network to fade in after the hubs.")]
         [SerializeField] private float revealLinesSeconds = 1.0f;
         [Tooltip("Seconds for the flow particles to fade in after the roads.")]
@@ -305,6 +303,7 @@ namespace CityTwin.UI
             StopRippleHint();
             RestoreRevealVisuals();
             SetTutorialEyeCandy(false);
+            ClearStaging();
             if (skipButton != null) skipButton.SetActive(false);
             HideGameStartUi(); // back to the start screen: pins hide until the next round begins
             TileEditsBlocked = true; // back to the start screen: the table locks for the next round
@@ -372,46 +371,67 @@ namespace CityTwin.UI
                 if (showTween != null) yield return showTween.WaitForCompletion(true);
 
                 // Step visual: fire alongside the text, once the popup has landed.
+                // Staging: only the element(s) the robot talks about stay lit on the bar.
                 // Glow always rides a value animation: the badge sweeps while it blooms.
                 if (action == "scoreGlow" && dashboard != null)
                 {
+                    StageFocus("Quality Of Life");
                     dashboard.HighlightPillar(DashboardController.Pillar.Qol, 1.8f);
                     dashboard.PlayQolMaxDemo(1.8f);
+                }
+                else if (action == "hubSpawn")
+                {
+                    // The city presents itself: centers spawn in while the robot talks about them.
+                    StartCoroutine(SpawnHubsShowRoutine());
                 }
 
                 float duration = step.durationSeconds > 0 ? step.durationSeconds : 5f;
 
                 if (action == "categoryGlow" && dashboard != null)
                 {
-                    // Walk the four categories, half a second of glow each.
+                    // Walk the four categories, half a second of glow each; the stage light
+                    // follows the category currently being demonstrated, and every city
+                    // center's matching ring arc sweeps in sync — bar and ring are the
+                    // same stat, shown as one gesture.
                     var pillars = new[]
                     {
-                        DashboardController.Pillar.Environment,
-                        DashboardController.Pillar.Economy,
-                        DashboardController.Pillar.HealthSafety,
-                        DashboardController.Pillar.CultureEdu
+                        (DashboardController.Pillar.Environment, "Environment", 0),
+                        (DashboardController.Pillar.Economy, "Economy", 1),
+                        (DashboardController.Pillar.HealthSafety, "Safety", 2),
+                        (DashboardController.Pillar.CultureEdu, "Culture", 3)
                     };
-                    foreach (var p in pillars)
+                    foreach (var (p, groupName, ringQuadrant) in pillars)
                     {
+                        StageFocus(groupName);
                         dashboard.HighlightPillar(p, 1.2f);
                         dashboard.PlayPillarMaxDemo(p, 1.2f); // bar sweeps to full and back
+                        if (hubRegistry != null && hubRegistry.Hubs != null)
+                            foreach (var h in hubRegistry.Hubs)
+                                if (h != null) h.PlayRingDemo(ringQuadrant, 1.2f);
                         yield return new WaitForSeconds(0.85f);
                     }
+                    // Rest of the step: all four categories hold the stage together.
+                    StageFocus("Environment", "Economy", "Safety", "Culture");
                     float rest = duration - pillars.Length * 0.85f;
                     if (rest > 0f) yield return new WaitForSeconds(rest);
                 }
                 else if (action == "qolDemo" && dashboard != null)
                 {
-                    // QOL sweeps to max and back while Budget and Time flash.
+                    // QOL sweeps to max and back while Budget, then Time, blink in turn —
+                    // sequential so each readout gets its own beat of attention.
+                    StageFocus("Quality Of Life", "Budget", "Timer");
                     float sweep = Mathf.Min(3f, duration - 0.5f);
                     dashboard.PlayQolMaxDemo(sweep);
                     dashboard.HighlightPillar(DashboardController.Pillar.Qol, sweep); // glow rides the sweep
-                    dashboard.HighlightTimer(1.2f);
-                    dashboard.HighlightBudget(1.2f);
+                    StartCoroutine(BudgetThenTimerBlink());
                     yield return new WaitForSeconds(duration);
                 }
                 else
                 {
+                    // Talk/map/spawn steps: the whole bar stays lit — the base stage is
+                    // "centers off, network animated, top menu on"; only the stat steps
+                    // narrow the light to their subject.
+                    if (action != "scoreGlow") ClearStaging();
                     yield return new WaitForSeconds(duration);
                 }
 
@@ -440,6 +460,8 @@ namespace CityTwin.UI
             _sequenceRoutine = null;
             StopRippleHint();
             SetTutorialEyeCandy(false); // roads back to full, particles back to city-driven
+            RestoreHiddenHubs();        // safety net if no step ever spawned the centers
+            ClearStaging();             // full top bar for live play
             if (skipButton != null) skipButton.SetActive(false);
             TileEditsBlocked = false;
             sessionTimer?.SetPaused(false); // the game is on — clock starts now
@@ -467,7 +489,10 @@ namespace CityTwin.UI
         [SerializeField] private float rippleMarkerSize = 52f;
         private readonly List<(Transform t, Vector3 scale)> _revealHubScales = new List<(Transform, Vector3)>();
 
-        /// <summary>Hubs pop in one by one, the road network fades in, then the flow particles start. ~3.5s.</summary>
+        /// <summary>Round-intro reveal: the road network draws in and traffic starts flowing — but
+        /// the city centers stay hidden. They are the payoff of the tutorial's "hubSpawn" step:
+        /// spawning them while the robot introduces the city guides the eye far better than
+        /// lighting up something that was already there.</summary>
         private IEnumerator CityRevealRoutine()
         {
             var holder = connectionRenderer != null ? connectionRenderer.RoadHolder : null;
@@ -497,30 +522,20 @@ namespace CityTwin.UI
                     Vector3 s = h.transform.localScale;
                     if (s.sqrMagnitude < 0.0001f) s = Vector3.one; // never capture a hidden scale as base
                     _revealHubScales.Add((h.transform, s));
-                    h.transform.localScale = Vector3.zero;
+                    h.transform.localScale = Vector3.zero; // held until the hubSpawn step (or restore)
                 }
             }
 
             yield return new WaitForSeconds(revealStartDelay);
 
-            // Beat 1: centers pop in, staggered.
-            foreach (var (t, s) in _revealHubScales)
-            {
-                if (t == null) continue;
-                t.DOKill(false);
-                t.DOScale(s, 0.55f).SetEase(Ease.OutBack).SetTarget(t);
-                yield return new WaitForSeconds(revealHubStagger);
-            }
-            yield return new WaitForSeconds(0.4f);
-
-            // Beat 2: the road network draws in.
+            // Beat 1: the road network draws in.
             if (roadsGroup != null)
             {
                 var fade = roadsGroup.DOFade(1f, revealLinesSeconds).SetEase(Ease.InOutSine).SetTarget(roadsGroup);
                 yield return fade.WaitForCompletion(true);
             }
 
-            // Beat 3: traffic starts flowing (re-grab: the pool may have grown while we waited).
+            // Beat 2: traffic starts flowing (re-grab: the pool may have grown while we waited).
             particles = GetComponentsInChildren<ConnectionFlowParticles>(true);
             for (float t = 0f; t < revealParticlesSeconds; t += Time.deltaTime)
             {
@@ -529,6 +544,51 @@ namespace CityTwin.UI
                 yield return null;
             }
             foreach (var p in particles) if (p != null) p.RevealFade = 1f;
+            // _revealHubScales intentionally stays populated: the hubSpawn step consumes it.
+        }
+
+        [Tooltip("Seconds between consecutive hub pops when the hubSpawn tutorial step brings the centers in.")]
+        [SerializeField] private float hubSpawnStagger = 0.25f;
+
+        /// <summary>qolDemo beat: Budget blinks first, Time follows once it settles.</summary>
+        private IEnumerator BudgetThenTimerBlink()
+        {
+            dashboard.HighlightBudget(1.2f);
+            yield return new WaitForSeconds(1.6f);
+            dashboard.HighlightTimer(1.2f);
+        }
+
+        /// <summary>"hubSpawn" step action: the city centers pop in one by one, each with a glow
+        /// pulse and a liquid splash, while the robot introduces the city.</summary>
+        private IEnumerator SpawnHubsShowRoutine()
+        {
+            var pending = new List<(Transform t, Vector3 s)>(_revealHubScales);
+            _revealHubScales.Clear();
+            var liquid = GetComponent<LiquidSurface>() ?? GetComponentInParent<LiquidSurface>();
+            foreach (var (t, s) in pending)
+            {
+                if (t == null) continue;
+                t.DOKill(false);
+                t.DOScale(s, 0.55f).SetEase(Ease.OutBack).SetUpdate(true).SetTarget(t);
+                var hub = t.GetComponent<ResidentialHubMono>();
+                if (hub != null) PulseCenterGlow(hub, 0.15f);
+                // No ring demo here: the arcs animate only once, during the category
+                // examples, so the spawn beat stays clean.
+                liquid?.Splash(t.position, 2.2f, 1.4f, 1f);
+                yield return new WaitForSeconds(hubSpawnStagger);
+            }
+        }
+
+        /// <summary>Any hub still waiting for its spawn step pops in now — covers skip, stop, and
+        /// configs without a hubSpawn action, so the round never starts with invisible centers.</summary>
+        private void RestoreHiddenHubs()
+        {
+            foreach (var (t, s) in _revealHubScales)
+            {
+                if (t == null) continue;
+                t.DOKill(false);
+                t.DOScale(s, 0.4f).SetEase(Ease.OutBack).SetUpdate(true).SetTarget(t);
+            }
             _revealHubScales.Clear();
         }
 
@@ -536,8 +596,8 @@ namespace CityTwin.UI
         [SerializeField] private float centerPulseGlowPeak = 3f;
 
         [Header("Tutorial eye candy")]
-        [Tooltip("Road network alpha while the tutorial talks (the table is locked, so the flow particles carry the show). Restored to 1 when the round opens.")]
-        [Range(0.05f, 1f)] [SerializeField] private float tutorialRoadDim = 0.35f;
+        [Tooltip("Road network alpha while the tutorial talks. 1 = network stays fully lit (it IS the show while the centers are off); lower to dim it.")]
+        [Range(0.05f, 1f)] [SerializeField] private float tutorialRoadDim = 1f;
         [Tooltip("Flow particle size multiplier during the tutorial.")]
         [SerializeField] private float tutorialParticleSize = 1.6f;
         [Tooltip("Particles behave as if the city were this built-up during the tutorial. 1 = fully built city; above 1 over-drives size and speed beyond the normal maximum.")]
@@ -546,6 +606,10 @@ namespace CityTwin.UI
         [SerializeField] private float roadDimDelay = 4f;
         [Tooltip("Map background brightness while the table is locked during the tutorial (1 = no dim). Brightens the moment placements are allowed, so the dim doubles as a 'may I place?' signal.")]
         [Range(0.1f, 1f)] [SerializeField] private float tutorialMapDim = 0.45f;
+        [Tooltip("Alpha of top-bar groups the robot is NOT talking about during a tutorial step. The subject of each step stays at full brightness; 1 disables staging.")]
+        [Range(0f, 1f)] [SerializeField] private float unfocusedGroupAlpha = 0.15f;
+        [Tooltip("Seconds for staging focus changes to fade.")]
+        [SerializeField] private float stageFadeSeconds = 0.5f;
         [Tooltip("The map background image that gets dimmed. Auto-resolved (the Sector_0 RawImage) when empty.")]
         [SerializeField] private Graphic tutorialMapGraphic;
 
@@ -574,6 +638,56 @@ namespace CityTwin.UI
             foreach (var g in GetComponentsInChildren<Image>(true))
                 if (g.name == "Main BG") { tutorialMapGraphic = g; break; }
             return tutorialMapGraphic;
+        }
+
+        // ---- staging: only the elements the robot talks about stay lit ----
+
+        private readonly Dictionary<string, CanvasGroup> _topBarGroups = new Dictionary<string, CanvasGroup>();
+
+        private void CacheTopBarGroups()
+        {
+            if (_topBarGroups.Count > 0) return;
+            Transform topBar = null;
+            foreach (var t in GetComponentsInChildren<Transform>(true))
+                if (t.name == "Top Bar UI") { topBar = t; break; }
+            if (topBar == null) return;
+            foreach (Transform group in topBar)
+            {
+                var cg = group.GetComponent<CanvasGroup>();
+                if (cg == null) cg = group.gameObject.AddComponent<CanvasGroup>();
+                _topBarGroups[group.name] = cg;
+            }
+        }
+
+        /// <summary>Fade every top-bar group down except the named ones — the robot's current
+        /// subjects. Call with no names to dim the whole bar (map/tile talk); ClearStaging restores.</summary>
+        private void StageFocus(params string[] focusNames)
+        {
+            if (unfocusedGroupAlpha >= 0.999f) return; // staging disabled
+            CacheTopBarGroups();
+            foreach (var kv in _topBarGroups)
+            {
+                bool focused = false;
+                if (focusNames != null)
+                    for (int i = 0; i < focusNames.Length; i++)
+                        if (kv.Key == focusNames[i]) { focused = true; break; }
+                var cg = kv.Value;
+                if (cg == null) continue;
+                DOTween.Kill(cg);
+                cg.DOFade(focused ? 1f : unfocusedGroupAlpha, Mathf.Max(0.05f, stageFadeSeconds))
+                  .SetEase(Ease.InOutSine).SetUpdate(true).SetTarget(cg);
+            }
+        }
+
+        private void ClearStaging()
+        {
+            foreach (var kv in _topBarGroups)
+            {
+                var cg = kv.Value;
+                if (cg == null) continue;
+                DOTween.Kill(cg);
+                cg.DOFade(1f, Mathf.Max(0.05f, stageFadeSeconds)).SetEase(Ease.InOutSine).SetUpdate(true).SetTarget(cg);
+            }
         }
 
         private void LateUpdate()

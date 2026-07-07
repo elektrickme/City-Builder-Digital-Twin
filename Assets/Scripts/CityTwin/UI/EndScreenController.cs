@@ -4,6 +4,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 using DG.Tweening;
+using CityTwin.Core;
 
 namespace CityTwin.UI
 {
@@ -49,8 +50,6 @@ namespace CityTwin.UI
         [Header("Completion Phase")]
         [Tooltip("Seconds the scorecard (score, cards, band text) stays up before it gives way to the big completion message. The restart status text is hidden until then.")]
         [SerializeField] private float scorecardSeconds = 12f;
-        [Tooltip("Card background alpha while the completion message shows, so the tiles on the table stay visible underneath (1 = opaque).")]
-        [Range(0.2f, 1f)] [SerializeField] private float completionBackgroundAlpha = 0.9f;
         [Tooltip("The card's background image. Auto-resolved by name (\"Background\") when left empty.")]
         [SerializeField] private Image cardBackground;
         [Tooltip("Level visuals switched off while the completion message shows, leaving only the placed-tile pins and the message. Hidden via CanvasGroup alpha, so no object lifecycles are touched.")]
@@ -135,6 +134,12 @@ namespace CityTwin.UI
                 var heading = QOLText.transform.parent.Find("Simulation Complete Text");
                 if (heading != null) _scorecardElements.Add(heading.gameObject);
             }
+            // The android mascot leaves with the scorecard — the clear-the-table message stands alone.
+            if (endPanel != null)
+            {
+                foreach (var t in endPanel.GetComponentsInChildren<Transform>(true))
+                    if (t.name == "Avatar Icon") { _scorecardElements.Add(t.gameObject); break; }
+            }
             return _scorecardElements;
         }
 
@@ -187,9 +192,17 @@ namespace CityTwin.UI
             float stage = Mathf.Max(0.1f, completionFadeSeconds);
 
             // Stage 1: scorecard and level UI fade out; the road network only dims for now.
+            // The map background PNG fades with them (its Image color doesn't cascade to the
+            // pins it parents, so they stay visible).
             foreach (var go in ScorecardElements()) FadeGroup(go, 0f, stage);
             foreach (var go in hideOnCompletion)
                 FadeGroup(go, IsRoadHolder(go) ? completionRoadDim : 0f, stage);
+            var map = MapGraphic();
+            if (map != null)
+            {
+                DOTween.Kill(map);
+                map.DOFade(0f, stage).SetEase(Ease.InOutSine).SetUpdate(true).SetTarget(map);
+            }
             yield return new WaitForSecondsRealtime(stage);
 
             // Stage 2: the roads and their particles go too.
@@ -197,9 +210,18 @@ namespace CityTwin.UI
                 if (IsRoadHolder(go)) FadeGroup(go, 0f, stage);
             yield return new WaitForSecondsRealtime(stage);
 
-            // Stage 3: message fades up on the semi-transparent card.
+            // Stage 3: the card backdrop disappears with the scorecard — the clear-the-table
+            // message floats free over the pins. The faded map image is switched off entirely
+            // so nothing of the level PNG lingers either.
             foreach (var go in ScorecardElements()) if (go != null) go.SetActive(false);
-            SetCardAlpha(completionBackgroundAlpha);
+            if (map != null) map.enabled = false;
+            var cardBg = CardBackground();
+            if (cardBg != null)
+            {
+                DOTween.Kill(cardBg);
+                cardBg.DOFade(0f, stage).SetEase(Ease.InOutSine).SetUpdate(true).SetTarget(cardBg)
+                    .OnComplete(() => { if (cardBg != null) cardBg.enabled = false; });
+            }
             if (restartStatusText != null)
             {
                 restartStatusText.gameObject.SetActive(true);
@@ -219,6 +241,8 @@ namespace CityTwin.UI
                 restartStatusText.gameObject.SetActive(true);
                 ResetGroup(restartStatusText.gameObject);
             }
+            var bg = CardBackground();
+            if (bg != null) { DOTween.Kill(bg); bg.enabled = true; }
             if (_cardBaseAlpha >= 0f) SetCardAlpha(_cardBaseAlpha); // back to the opaque scorecard
             RestoreLevelVisuals();
         }
@@ -227,6 +251,32 @@ namespace CityTwin.UI
 
         private static bool IsRoadHolder(GameObject go)
             => go != null && go.name.Contains("Connector Lines");
+
+        private Graphic _resolvedMapGraphic;
+        private float _mapBaseAlpha = -1f;
+
+        /// <summary>The visible map background PNG. The serialized field wins only when it points
+        /// at a live component; otherwise fall back to the "Main BG" Image, which is where
+        /// HubLayoutManager puts the map art (the old serialized target was a disabled black
+        /// backdrop, so "disable the background" silently did nothing).</summary>
+        private Graphic MapGraphic()
+        {
+            if (_resolvedMapGraphic != null) return _resolvedMapGraphic;
+            if (mapGraphic != null && mapGraphic.enabled)
+            {
+                _resolvedMapGraphic = mapGraphic;
+            }
+            else
+            {
+                var root = GetComponentInParent<GameInstanceRoot>(true);
+                Transform searchFrom = root != null ? root.transform : transform.root;
+                foreach (var img in searchFrom.GetComponentsInChildren<Image>(true))
+                    if (img.name == "Main BG") { _resolvedMapGraphic = img; break; }
+            }
+            if (_resolvedMapGraphic != null && _mapBaseAlpha < 0f)
+                _mapBaseAlpha = _resolvedMapGraphic.color.a;
+            return _resolvedMapGraphic;
+        }
 
         private static CanvasGroup GetOrAddGroup(GameObject go)
         {
@@ -258,6 +308,18 @@ namespace CityTwin.UI
         private void RestoreLevelVisuals()
         {
             if (mapGraphic != null) mapGraphic.enabled = true;
+            var map = MapGraphic();
+            if (map != null)
+            {
+                DOTween.Kill(map);
+                map.enabled = true;
+                if (_mapBaseAlpha >= 0f)
+                {
+                    var c = map.color;
+                    c.a = _mapBaseAlpha;
+                    map.color = c;
+                }
+            }
             if (hideOnCompletion == null) return;
             foreach (var go in hideOnCompletion) ResetGroup(go);
         }

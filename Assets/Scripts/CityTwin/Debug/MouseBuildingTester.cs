@@ -523,6 +523,15 @@ public class MouseBuildingTester : MonoBehaviour
 
             DrawSaveRow();
 
+            // Road edit mode lives at the top level so it exists in BOTH menu modes — and in
+            // builds, so the map can be re-laid-out on the installation hardware itself.
+            if (roadEditor != null &&
+                GUILayout.Button(roadEditor.EditModeActive ? "Close Road Editor" : "Road Editor (drag cities & road ends)", GUILayout.Height(28f)))
+            {
+                roadEditor.ToggleEditMode();
+                _pickerOpen = false; // hand the screen over to the road editor handles
+            }
+
             _expertMode = GUILayout.Toggle(_expertMode,
                 _expertMode ? " Expert mode — showing everything" : " Expert mode — off (client basics only)",
                 GUI.skin.button, GUILayout.Height(24f));
@@ -575,15 +584,6 @@ public class MouseBuildingTester : MonoBehaviour
             bool playtestingOpen = DrawFoldout("Playtesting", "Live balancing knobs. Use Save config to persist; otherwise they reset on restart / relaunch.", true);
             if (playtestingOpen)
             {
-
-#if UNITY_EDITOR
-            if (roadEditor != null &&
-                GUILayout.Button(roadEditor.EditModeActive ? "Close Road Editor" : "Road Editor (drag cities & road ends)", GUILayout.Height(28f)))
-            {
-                roadEditor.ToggleEditMode();
-                _pickerOpen = false; // hand the screen over to the road editor handles
-            }
-#endif
 
             if (coordinator != null)
             {

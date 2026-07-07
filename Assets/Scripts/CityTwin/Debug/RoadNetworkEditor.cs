@@ -14,10 +14,10 @@ using CityTwin.UI;
 ///  - road extension endpoints — orange; dragging pins that end as a manual override.
 /// Handles are clamped to the screen so endpoints near the fan edge stay grabbable.
 ///
-/// Save writes StreamingAssets/road_layout_&lt;instance&gt;.json (one file per game
-/// instance). The layout is LOADED at runtime on every platform — so hand-tuned
-/// layouts ship in builds — while the editing UI only exists inside the Unity
-/// editor (compiled out of production via UNITY_EDITOR).
+/// Save writes StreamingAssets/road_layout.json — ONE shared file for all game
+/// instances, versioned with the repo so layouts travel between machines. The layout
+/// loads at runtime on every platform, and the editing UI works in builds too (opened
+/// from the playtest menu), so the map can be tuned on the installation hardware.
 /// </summary>
 public class RoadNetworkEditor : MonoBehaviour
 {
@@ -121,12 +121,10 @@ public class RoadNetworkEditor : MonoBehaviour
 
     public void ToggleEditMode()
     {
-#if UNITY_EDITOR
+        // Available in builds too, so the map can be tuned on the installation hardware
+        // straight from the playtest menu.
         EditModeActive = !EditModeActive;
         _drag = DragTarget.None;
-#else
-        Debug.LogWarning("[RoadNetworkEditor] Edit mode is editor-only.");
-#endif
     }
 
     // ── persistence ──
@@ -180,8 +178,16 @@ public class RoadNetworkEditor : MonoBehaviour
     public void LoadAndApply()
     {
         string loadPath = ResolveLoadPath();
-        if (loadPath == null) return;
+        if (loadPath == null)
+        {
+            // Loud on purpose: a build that ships without the layout used to fail silently and
+            // players just saw the default map. This line makes the player log diagnostic.
+            Debug.LogWarning("[RoadNetworkEditor] No road layout found (looked for " + SharedPath
+                + " and road_layout_*.json in " + Application.streamingAssetsPath + ") - using default map.");
+            return;
+        }
         if (hubRegistry == null || connectionRenderer == null) return;
+        Debug.Log("[RoadNetworkEditor] Loading road layout: " + loadPath);
 
         SavedLayout data;
         try { data = JsonUtility.FromJson<SavedLayout>(File.ReadAllText(loadPath)); }
@@ -222,8 +228,7 @@ public class RoadNetworkEditor : MonoBehaviour
             + (data.extensions?.Count ?? 0) + " endpoint overrides, " + (data.waypoints?.Count ?? 0) + " waypoints).");
     }
 
-#if UNITY_EDITOR
-    // ── in-editor drag UI ──
+    // ── drag-editing UI (runtime IMGUI + Input System — works in builds too) ──
 
     private enum DragTarget { None, Hub, Extension, Waypoint }
     private DragTarget _drag = DragTarget.None;
@@ -551,7 +556,7 @@ public class RoadNetworkEditor : MonoBehaviour
         }
 
         if (_hasSel) Add("Deselect road", () => _hasSel = false);
-        Add("Save layout (this instance)", SaveLayout);
+        Add("Save layout (all instances)", SaveLayout);
         Add("Reload saved", LoadAndApply);
         Add("Clear endpoint overrides", () => { connectionRenderer.ClearExtensionOverrides(); connectionRenderer.RefreshNow(); });
         Add("Clear all bend points", () => { connectionRenderer.ClearWaypoints(); connectionRenderer.RefreshNow(); });
@@ -657,5 +662,4 @@ public class RoadNetworkEditor : MonoBehaviour
             Mathf.Clamp(gui.x, screenEdgeMargin, Screen.width - screenEdgeMargin),
             Mathf.Clamp(gui.y, screenEdgeMargin, Screen.height - screenEdgeMargin));
     }
-#endif
 }

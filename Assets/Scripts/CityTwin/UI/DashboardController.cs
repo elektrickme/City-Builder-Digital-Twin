@@ -43,6 +43,16 @@ public class DashboardController : MonoBehaviour
     [Tooltip("Resting HDR multiplier for top-bar texts and icons. 1 = no glow at rest; the tutorial highlight pulses still sweep well above 1.")]
     [Range(1f, 6f)] [SerializeField] private float topBarGlowBoost = 1f;
 
+    [Header("Low budget alert")]
+    [Tooltip("Budget below this blinks the readout red — the player has effectively run out of funds. Set to the cheapest building price; 0 disables the alert.")]
+    [SerializeField] private int lowBudgetThreshold = 100;
+    [Tooltip("Text color at the red end of the blink.")]
+    [SerializeField] private Color lowBudgetColor = new Color(1f, 0.25f, 0.2f, 1f);
+    [Tooltip("HDR glow at the red peak of the blink (must clear the bloom threshold, ~2.24, to halo).")]
+    [Range(1f, 6f)] [SerializeField] private float lowBudgetGlowPeak = 3f;
+    [Tooltip("Seconds for one half of the blink (to red / back). Full blink = twice this.")]
+    [SerializeField] private float lowBudgetBlinkSeconds = 0.45f;
+
     [Header("Tutorial highlight")]
     [Tooltip("HDR multiplier at the top of a highlight flash. Bloom threshold is ~2.24, so higher = stronger halo.")]
     [Range(2.3f, 8f)] [SerializeField] private float highlightGlowPeak = 2.5f;
@@ -128,6 +138,7 @@ public class DashboardController : MonoBehaviour
 
     private void OnDisable()
     {
+        StopLowBudgetBlink();
         // Stop any in-flight pulses and restore resting scale so a disabled/destroyed bar
         // doesn't keep a tween alive or freeze at an inflated scale.
         foreach (var kv in _pillarBaseScales)
@@ -155,11 +166,81 @@ public class DashboardController : MonoBehaviour
             budgetText.text = _lastBudget.ToString();
         }
 
+        UpdateLowBudgetAlert();
+
         // Drive the metric smoothing every frame so the bars/texts converge to the live values and
         // settle to 0 when the last building is removed. OnMetricsChanged fires only on discrete edits,
         // which is too sparse for the lerp to reach its target on its own (a single removal would
         // otherwise nudge the bars ~5% toward 0 and then freeze).
         RefreshMetrics();
+    }
+
+    // ---- low budget alert ----
+
+    private Sequence _lowBudgetSeq;
+    private Color _budgetBaseColor;
+    private bool _budgetBaseCaptured;
+
+    /// <summary>Blink the budget readout red (color + HDR glow, so the bloom pass halos it) while
+    /// funds are below the cheapest building. Self-healing: if a tutorial highlight kills the loop,
+    /// it restarts on the next frame the budget is still low.</summary>
+    private void UpdateLowBudgetAlert()
+    {
+        if (budgetText == null || lowBudgetThreshold <= 0) return;
+        bool inGameplay = sessionTimer == null
+            || (sessionTimer.CurrentPhase == SessionTimer.Phase.Gameplay && sessionTimer.IsRunning);
+        bool low = inGameplay && coordinator != null && coordinator.Budget < lowBudgetThreshold;
+
+        if (low)
+        {
+            if (_lowBudgetSeq == null || !_lowBudgetSeq.IsActive()) StartLowBudgetBlink();
+        }
+        else if (_lowBudgetSeq != null)
+        {
+            StopLowBudgetBlink();
+        }
+    }
+
+    private void StartLowBudgetBlink()
+    {
+        if (!_budgetBaseCaptured)
+        {
+            _budgetBaseColor = budgetText.color;
+            _budgetBaseCaptured = true;
+        }
+
+        var glow = budgetText.GetComponent<UIGlow>();
+        if (glow == null)
+        {
+            glow = budgetText.gameObject.AddComponent<UIGlow>();
+            glow.glowBoost = topBarGlowBoost;
+        }
+
+        budgetText.DOKill(false);
+        glow.DOKill(false);
+        budgetText.color = _budgetBaseColor;
+        float half = Mathf.Max(0.1f, lowBudgetBlinkSeconds);
+        float baseGlow = glow.BaseGlowBoost;
+        _lowBudgetSeq = DOTween.Sequence().SetTarget(budgetText).SetUpdate(true)
+            .Append(budgetText.DOColor(lowBudgetColor, half).SetEase(Ease.InOutSine))
+            .Join(DOTween.To(() => glow.GlowBoost, v => glow.GlowBoost = v, lowBudgetGlowPeak, half).SetEase(Ease.InOutSine))
+            .Append(budgetText.DOColor(_budgetBaseColor, half).SetEase(Ease.InOutSine))
+            .Join(DOTween.To(() => glow.GlowBoost, v => glow.GlowBoost = v, baseGlow, half).SetEase(Ease.InOutSine))
+            .SetLoops(-1)
+            .OnKill(() =>
+            {
+                if (budgetText != null) budgetText.color = _budgetBaseColor;
+                if (glow != null) glow.GlowBoost = baseGlow;
+            });
+    }
+
+    private void StopLowBudgetBlink()
+    {
+        if (_lowBudgetSeq != null)
+        {
+            _lowBudgetSeq.Kill(); // OnKill restores color and glow
+            _lowBudgetSeq = null;
+        }
     }
 
     public enum Pillar { Environment, Economy, HealthSafety, CultureEdu, Qol }
